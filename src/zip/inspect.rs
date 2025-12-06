@@ -1,40 +1,18 @@
+use std::collections::BTreeMap;
+
 use super::parse::ZipFile;
 use chardetng::EncodingDetector;
 use encoding_rs::{SHIFT_JIS, UTF_8, UTF_16BE, UTF_16LE};
 
-/// Input encoding preference for filename decoding
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CharacterEncoding {
-    /// UTF-8 encoding
-    Utf8,
-    /// UTF-16 Little Endian
-    Utf16Le,
-    /// UTF-16 Big Endian
-    Utf16Be,
-    /// Windows-31J (Shift JIS) - Japanese
-    Cp932,
-}
-
-/// Configuration for decoding filenames from ZIP entries
-#[derive(Debug, Clone, Default)]
-pub struct DecodeConfig {
-    /// Input encoding preference
-    /// None means auto-detect
-    pub encoding: Option<CharacterEncoding>,
-    /// If true, prefer using extra field data for decoding
-    /// If false, use the main file_name field
-    pub prefer_extra_field: bool,
-}
-
 /// Decoded filename information
 #[derive(Debug, Clone)]
 pub struct DecodedFilename {
-    /// The decoded filename as a UTF-8 string
-    pub filename: Option<String>,
     /// The original bytes before decoding
     pub original_bytes: Vec<u8>,
-    /// The encoding that was used to decode the filename
-    pub encoding_used: Option<&'static str>,
+    /// The original bytes before decoding
+    pub original_bytes_unicode: Vec<u8>,
+    /// The decoded filenames
+    pub decoded_map: BTreeMap<&'static str, (String, bool)>,
 }
 
 /// Decode bytes using a specific encoding from encoding_rs
@@ -57,7 +35,11 @@ fn auto_detect_and_decode(data: &[u8]) -> Option<(String, &'static str)> {
     if let Some(decoded) = decode_with_encoding(data, UTF_8, false)
         && !decoded.0.contains('\0')
     {
-        return Some(decoded);
+        if data.iter().all(|&b| b.is_ascii()) {
+            return Some((decoded.0, "ASCII"));
+        } else {
+            return Some(decoded);
+        }
     }
 
     // Use chardetng for general encoding detection
@@ -103,7 +85,7 @@ pub fn decode_filename(data: &[u8], config: &DecodeConfig) -> DecodedFilename {
 
 /// List all filenames in a ZipFile with the given decode configuration
 pub fn list_filenames(zip_file: &ZipFile, config: &DecodeConfig) -> Vec<DecodedFilename> {
-    zip_file
+    let filenames = zip_file
         .entries
         .iter()
         .map(|(cdh, _lfh)| {
@@ -123,10 +105,12 @@ pub fn list_filenames(zip_file: &ZipFile, config: &DecodeConfig) -> Vec<DecodedF
             } else {
                 &cdh.file_name
             };
-
-            decode_filename(filename_bytes, config)
+            filename_bytes
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    let concat_filename = filenames.iter().flat_map(|s| *s).collect::<Vec<_>>();
+    let decoded = decode_filename(&concat_filename, config);
 }
 
 #[cfg(test)]
