@@ -2,6 +2,9 @@ use std::io;
 
 /// Trait for reading data from a zip file or other source
 pub trait ZipReader {
+    /// Get the total size of the data source
+    fn get_size(&mut self) -> impl std::future::Future<Output = Result<u64, io::Error>>;
+
     /// Read data at the given offset and size
     fn read(
         &mut self,
@@ -25,6 +28,408 @@ pub struct ZipFileEntry {
     pub file_size: u64,
 }
 
+pub const DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE: u64 = 1024 * 1024; // 1 MiB
+
+/// Parse a complete zip file
+async fn parse_zip<Reader: ZipReader, State: Sized>(
+    reader: &mut Reader,
+    zip64_fallback_search_size: u64,
+    on_eocd: impl FnOnce(
+        EndOfCentralDirectory,
+        Option<(
+            Zip64EndOfCentralDirectory,
+            Option<Zip64EndOfCentralDirectoryLocator>,
+        )>,
+    ) -> Result<State, ZipParseError>,
+    mut on_entry: impl FnMut(&mut State, ZipFileEntry) -> Result<(), ZipParseError>,
+    mut on_warning: impl FnMut(
+        Option<&mut State>,
+        Option<u64>,
+        ZipParseError,
+    ) -> Result<(), ZipParseError>,
+) -> Result<State, ZipParseError> {
+    let file_size = reader.get_size().await?;
+
+    // Find EOCD by reading backwards from the end
+    // EOCD is at least 22 bytes, at most 22 + 65535 (max comment length)
+    let search_size = std::cmp::min(65557, file_size);
+    let search_offset = file_size.saturating_sub(search_size);
+
+    let eocd_data = reader.read(search_offset, search_size).await?;
+
+    // Find EOCD signature by scanning backwards
+    let mut eocd_offset = None;
+    for i in (0..eocd_data.len().saturating_sub(21)).rev() {
+        if parse_u32_le(&eocd_data[i..i + 4]) == 0x06054b50 {
+            eocd_offset = Some(search_offset + i as u64);
+            break;
+        }
+    }
+
+    let eocd_offset = eocd_offset.ok_or_else(|| {
+        ZipParseError::Other(format!(
+            "EOCD signature not found in the last {search_size} bytes"
+        ))
+    })?;
+
+    // Parse EOCD
+    let eocd_start_in_buffer = (eocd_offset - search_offset) as usize;
+    let eocd_data_slice = &eocd_data[eocd_start_in_buffer..];
+    let eocd =
+        EndOfCentralDirectory::parse(eocd_data_slice, |warning| on_warning(None, None, warning))?;
+
+    // Parse Zip64 EOCD if present
+    let eocd_zip64 = if eocd.total_entries == 0xFFFF
+        || eocd.central_directory_size == 0xFFFFFFFF
+        || eocd.central_directory_offset == 0xFFFFFFFF
+    {
+        let zip64_eocd_locator = {
+            // Read Zip64 EOCD Locator (20 bytes before EOCD)
+            if eocd_offset < Zip64EndOfCentralDirectoryLocator::SIZE as u64 {
+                return Err(ZipParseError::Other(format!(
+                    "Not enough space before EOCD at offset {eocd_offset} to read Zip64 EOCD Locator"
+                )));
+            }
+            let zip64_eocd_locator_data = reader
+                .read(
+                    eocd_offset - Zip64EndOfCentralDirectoryLocator::SIZE as u64,
+                    Zip64EndOfCentralDirectoryLocator::SIZE as u64,
+                )
+                .await?;
+
+            // Check signature
+            if parse_u32_le(&zip64_eocd_locator_data[0..4]) == 0x07064b50 {
+                let zip64_eocd_locator =
+                    Zip64EndOfCentralDirectoryLocator::parse(&zip64_eocd_locator_data)?;
+                if zip64_eocd_locator.total_disks >= 2 {
+                    // We allow "0" since some zip creators may write "0" for single-disk zips.
+                    return Err(ZipParseError::MultipleDiskNotSupported);
+                }
+
+                Some(zip64_eocd_locator)
+            } else {
+                // No valid Zip64 EOCD Locator found
+                None
+            }
+        };
+
+        let zip64_eocd_offset = if let Some(locator) = &zip64_eocd_locator {
+            locator.eocd_offset
+        } else {
+            // Find Zip64 EOCD signature before EOCD
+            let search_start = eocd_offset.saturating_sub(zip64_fallback_search_size);
+            let search_size = eocd_offset - search_start;
+            let zip64_search_data = reader.read(search_start, search_size).await?;
+            let mut zip64_eocd_offset = None;
+            for i in (0..zip64_search_data.len().saturating_sub(55)).rev() {
+                if parse_u32_le(&zip64_search_data[i..i + 4]) == 0x06064b50 {
+                    zip64_eocd_offset = Some(search_start + i as u64);
+                    break;
+                }
+            }
+            zip64_eocd_offset.ok_or_else(|| {
+                    ZipParseError::Other(format!(
+                        "Zip64 EOCD signature not found before EOCD within last {zip64_fallback_search_size} bytes from EOCD at offset {eocd_offset}"
+                    ))
+                })?
+        };
+
+        // Read and parse Zip64 EOCD
+        let zip64_eocd_header_data = reader
+            .read(
+                zip64_eocd_offset,
+                Zip64EndOfCentralDirectoryHeader::SIZE as u64,
+            )
+            .await?;
+        let zip64_eocd_header = Zip64EndOfCentralDirectoryHeader::parse(&zip64_eocd_header_data)?;
+
+        // Read extensible data sector if present
+        let extensible_data_size = zip64_eocd_header.size_of_record - 44; // 44 bytes is size without extensible data
+        let extensible_data = if extensible_data_size > 0 {
+            Some((
+                zip64_eocd_offset + Zip64EndOfCentralDirectoryHeader::SIZE as u64,
+                extensible_data_size,
+            ))
+        } else {
+            None
+        };
+
+        let zip64_eocd = Zip64EndOfCentralDirectory {
+            header: zip64_eocd_header,
+            extensible_data,
+        };
+        Some((zip64_eocd, zip64_eocd_locator))
+    } else {
+        None
+    };
+
+    // Determine effective central directory parameters
+    let (
+        effective_central_directory_offset,
+        effective_central_directory_size,
+        effective_total_entries,
+    ) = if let Some((zip64_eocd, _)) = &eocd_zip64 {
+        if zip64_eocd.header.disk_number != zip64_eocd.header.disk_number_with_eocd
+            || zip64_eocd.header.total_entries != zip64_eocd.header.total_entries_on_disk
+        {
+            return Err(ZipParseError::MultipleDiskNotSupported);
+        }
+
+        (
+            zip64_eocd.header.central_directory_offset,
+            zip64_eocd.header.central_directory_size,
+            zip64_eocd.header.total_entries,
+        )
+    } else {
+        if eocd.disk_number != eocd.disk_number_with_eocd
+            || eocd.total_entries != eocd.entries_on_disk
+        {
+            return Err(ZipParseError::MultipleDiskNotSupported);
+        }
+
+        (
+            eocd.central_directory_offset as u64,
+            eocd.central_directory_size as u64,
+            eocd.total_entries as u64,
+        )
+    };
+
+    // Invoke EOCD callback
+    let mut state = on_eocd(eocd, eocd_zip64)?;
+
+    // Read central directory
+    let central_dir_data = reader
+        .read(
+            effective_central_directory_offset,
+            effective_central_directory_size,
+        )
+        .await?;
+
+    // Parse all CDH entries and LFH entries
+    let mut cdh_offset = 0;
+    for idx in 0..effective_total_entries {
+        // Parse CDH
+        if cdh_offset + CentralDirectoryHeader::MIN_SIZE > central_dir_data.len() {
+            return Err(ZipParseError::LengthTooShort {
+                name: "CDH",
+                expected: cdh_offset + CentralDirectoryHeader::MIN_SIZE,
+                found: central_dir_data.len(),
+            });
+        }
+
+        let cdh = CentralDirectoryHeader::parse(&central_dir_data[cdh_offset..], |warning| {
+            on_warning(Some(&mut state), Some(idx), warning)
+        })?;
+        cdh_offset += cdh.len();
+
+        if cdh.flags.is_central_directory_encrypted() {
+            return Err(ZipParseError::CentralDirectoryEncryptionNotSupported);
+        }
+
+        // Parse LFH
+        let lfh_full_data = {
+            let lfh_data = reader
+                .read(
+                    cdh.local_header_offset as u64,
+                    LocalFileHeader::MIN_SIZE as u64,
+                )
+                .await?;
+            if lfh_data.len() < LocalFileHeader::MIN_SIZE {
+                return Err(ZipParseError::LengthTooShort {
+                    name: "LFH",
+                    expected: LocalFileHeader::MIN_SIZE,
+                    found: lfh_data.len(),
+                });
+            }
+
+            let file_name_len = parse_u16_le(&lfh_data[26..28]) as usize;
+            let extra_field_len = parse_u16_le(&lfh_data[28..30]) as usize;
+            let lfh_full_size = LocalFileHeader::MIN_SIZE + file_name_len + extra_field_len;
+
+            reader
+                .read(cdh.local_header_offset as u64, lfh_full_size as u64)
+                .await?
+        };
+        let lfh = LocalFileHeader::parse(&lfh_full_data, |warning| {
+            on_warning(Some(&mut state), Some(idx), warning)
+        })?;
+
+        let file_offset = cdh.local_header_offset as u64 + lfh.len() as u64;
+        let file_size = cdh
+            .zip64
+            .and_then(|zip64| zip64.compressed_size)
+            .unwrap_or(cdh.compressed_size as u64);
+
+        // Parse Data Descriptor if present
+        let descriptor = if lfh.flags.has_data_descriptor() {
+            // When Data Descriptor is present, the values in LFH are set to zero
+            if lfh.compressed_size != 0 {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::UnexpectedValue {
+                        name: "LFH Compressed Size",
+                        expected: 0,
+                        found: lfh.compressed_size as u64,
+                    },
+                )?;
+            }
+            if lfh.uncompressed_size != 0 {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::UnexpectedValue {
+                        name: "LFH Uncompressed Size",
+                        expected: 0,
+                        found: lfh.uncompressed_size as u64,
+                    },
+                )?;
+            }
+            if lfh.crc32 != 0 {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::UnexpectedValue {
+                        name: "LFH CRC32",
+                        expected: 0,
+                        found: lfh.crc32 as u64,
+                    },
+                )?;
+            }
+
+            // Check if Zip64 extension is used
+            // When Zip64 extension is used, the Data Descriptor uses 8-byte sizes
+            let has_zip64_extension = lfh
+                .extra_fields
+                .iter()
+                .any(|ef| ef.tag == Zip64ExtendedInfo::TAG)
+                || cdh
+                    .extra_fields
+                    .iter()
+                    .any(|ef| ef.tag == Zip64ExtendedInfo::TAG);
+
+            // Read and parse Data Descriptor
+            let result = if has_zip64_extension {
+                DataDescriptor::parse_zip64(
+                    reader
+                        .read(
+                            file_offset + file_size,
+                            DataDescriptor::INSPECT_SIZE_ZIP64 as u64,
+                        )
+                        .await?
+                        .as_slice(),
+                )
+            } else {
+                DataDescriptor::parse_standard(
+                    reader
+                        .read(
+                            file_offset + file_size,
+                            DataDescriptor::INSPECT_SIZE_STANDARD as u64,
+                        )
+                        .await?
+                        .as_slice(),
+                )
+            };
+
+            match result {
+                Ok(descriptor) => Some(descriptor),
+                Err(e) => {
+                    // Invoke warning callback and continue
+                    // We don't need Data Descriptor since we have CDH information
+                    on_warning(Some(&mut state), Some(idx), e)?;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Consistency check
+        let lfh_compressed_size = if lfh.flags.has_data_descriptor() {
+            descriptor.map(|descriptor| descriptor.get_compressed_size())
+        } else {
+            lfh.zip64
+                .and_then(|zip64| zip64.compressed_size)
+                .or(Some(lfh.compressed_size as u64))
+        };
+        if let Some(value) = lfh_compressed_size {
+            let cdh_value = cdh
+                .zip64
+                .and_then(|zip64| zip64.compressed_size)
+                .unwrap_or(cdh.compressed_size as u64);
+            if value != cdh_value {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::InconsistentValue {
+                        name: "Compressed Size",
+                        expected: cdh_value,
+                        found: value,
+                    },
+                )?;
+            }
+        }
+
+        let lfh_uncompressed_size = if lfh.flags.has_data_descriptor() {
+            descriptor.map(|descriptor| descriptor.get_uncompressed_size())
+        } else {
+            lfh.zip64
+                .and_then(|zip64| zip64.uncompressed_size)
+                .or(Some(lfh.uncompressed_size as u64))
+        };
+        if let Some(value) = lfh_uncompressed_size {
+            let cdh_value = cdh
+                .zip64
+                .and_then(|zip64| zip64.uncompressed_size)
+                .unwrap_or(cdh.uncompressed_size as u64);
+            if value != cdh_value {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::InconsistentValue {
+                        name: "Uncompressed Size",
+                        expected: cdh_value,
+                        found: value,
+                    },
+                )?;
+            }
+        }
+
+        let lfh_crc32 = if lfh.flags.has_data_descriptor() {
+            descriptor.map(|descriptor| descriptor.get_crc32())
+        } else {
+            Some(lfh.crc32)
+        };
+        if let Some(value) = lfh_crc32 {
+            if value != cdh.crc32 {
+                on_warning(
+                    Some(&mut state),
+                    Some(idx),
+                    ZipParseError::InconsistentValue {
+                        name: "CRC32",
+                        expected: cdh.crc32 as u64,
+                        found: value as u64,
+                    },
+                )?;
+            }
+        }
+
+        // Invoke callback for the entry
+        on_entry(
+            &mut state,
+            ZipFileEntry {
+                cdh,
+                lfh,
+                descriptor,
+                file_offset,
+                file_size,
+            },
+        )?;
+    }
+
+    Ok(state)
+}
+
 /// Trait for parsing zip files
 pub trait ZipFileParser: Sized {
     const ZIP64_FALLBACK_SEARCH_SIZE: u64 = 1024 * 1024; // 1 MiB
@@ -41,348 +446,6 @@ pub trait ZipFileParser: Sized {
     fn on_entry(&mut self, entry: ZipFileEntry) -> Result<(), ZipParseError>;
 
     fn on_warning(&mut self, warning: ZipParseError) -> Result<(), ZipParseError>;
-
-    /// Parse a complete zip file
-    async fn parse<R: ZipReader>(
-        &mut self,
-        reader: &mut R,
-        file_size: u64,
-    ) -> Result<(), ZipParseError> {
-        // Find EOCD by reading backwards from the end
-        // EOCD is at least 22 bytes, at most 22 + 65535 (max comment length)
-        let search_size = std::cmp::min(65557, file_size);
-        let search_offset = file_size.saturating_sub(search_size);
-
-        let eocd_data = reader.read(search_offset, search_size).await?;
-
-        // Find EOCD signature by scanning backwards
-        let mut eocd_offset = None;
-        for i in (0..eocd_data.len().saturating_sub(21)).rev() {
-            if parse_u32_le(&eocd_data[i..i + 4]) == 0x06054b50 {
-                eocd_offset = Some(search_offset + i as u64);
-                break;
-            }
-        }
-
-        let eocd_offset = eocd_offset.ok_or_else(|| {
-            ZipParseError::Other(format!(
-                "EOCD signature not found in the last {search_size} bytes"
-            ))
-        })?;
-
-        // Parse EOCD
-        let eocd_start_in_buffer = (eocd_offset - search_offset) as usize;
-        let eocd_data_slice = &eocd_data[eocd_start_in_buffer..];
-        let eocd =
-            EndOfCentralDirectory::parse(eocd_data_slice, |warning| self.on_warning(warning))?;
-
-        // Parse Zip64 EOCD if present
-        let eocd_zip64 = if eocd.total_entries == 0xFFFF
-            || eocd.central_directory_size == 0xFFFFFFFF
-            || eocd.central_directory_offset == 0xFFFFFFFF
-        {
-            let zip64_eocd_locator = {
-                // Read Zip64 EOCD Locator (20 bytes before EOCD)
-                if eocd_offset < Zip64EndOfCentralDirectoryLocator::SIZE as u64 {
-                    return Err(ZipParseError::Other(format!(
-                        "Not enough space before EOCD at offset {eocd_offset} to read Zip64 EOCD Locator"
-                    )));
-                }
-                let zip64_eocd_locator_data = reader
-                    .read(
-                        eocd_offset - Zip64EndOfCentralDirectoryLocator::SIZE as u64,
-                        Zip64EndOfCentralDirectoryLocator::SIZE as u64,
-                    )
-                    .await?;
-
-                // Check signature
-                if parse_u32_le(&zip64_eocd_locator_data[0..4]) == 0x07064b50 {
-                    let zip64_eocd_locator =
-                        Zip64EndOfCentralDirectoryLocator::parse(&zip64_eocd_locator_data)?;
-                    Some(zip64_eocd_locator)
-                } else {
-                    // No valid Zip64 EOCD Locator found
-                    None
-                }
-            };
-
-            let zip64_eocd_offset = if let Some(locator) = &zip64_eocd_locator {
-                locator.eocd_offset
-            } else {
-                // Find Zip64 EOCD signature before EOCD
-                let search_start = eocd_offset.saturating_sub(Self::ZIP64_FALLBACK_SEARCH_SIZE);
-                let search_size = eocd_offset - search_start;
-                let zip64_search_data = reader.read(search_start, search_size).await?;
-                let mut zip64_eocd_offset = None;
-                for i in (0..zip64_search_data.len().saturating_sub(55)).rev() {
-                    if parse_u32_le(&zip64_search_data[i..i + 4]) == 0x06064b50 {
-                        zip64_eocd_offset = Some(search_start + i as u64);
-                        break;
-                    }
-                }
-                zip64_eocd_offset.ok_or_else(|| {
-                    ZipParseError::Other(format!(
-                        "Zip64 EOCD signature not found before EOCD within last {} bytes from EOCD at offset {eocd_offset}",
-                        Self::ZIP64_FALLBACK_SEARCH_SIZE
-                    ))
-                })?
-            };
-
-            // Read and parse Zip64 EOCD
-            let zip64_eocd_header_data = reader
-                .read(
-                    zip64_eocd_offset,
-                    Zip64EndOfCentralDirectoryHeader::SIZE as u64,
-                )
-                .await?;
-            let zip64_eocd_header =
-                Zip64EndOfCentralDirectoryHeader::parse(&zip64_eocd_header_data)?;
-
-            // Read extensible data sector if present
-            let extensible_data_size = zip64_eocd_header.size_of_record - 44; // 44 bytes is size without extensible data
-            let extensible_data = if extensible_data_size > 0 {
-                Some((
-                    zip64_eocd_offset + Zip64EndOfCentralDirectoryHeader::SIZE as u64,
-                    extensible_data_size,
-                ))
-            } else {
-                None
-            };
-
-            let zip64_eocd = Zip64EndOfCentralDirectory {
-                header: zip64_eocd_header,
-                extensible_data,
-            };
-            Some((zip64_eocd, zip64_eocd_locator))
-        } else {
-            None
-        };
-
-        // Determine effective central directory parameters
-        let (
-            effective_central_directory_offset,
-            effective_central_directory_size,
-            effective_total_entries,
-        ) = if let Some((zip64_eocd, _)) = &eocd_zip64 {
-            (
-                zip64_eocd.header.central_directory_offset,
-                zip64_eocd.header.central_directory_size,
-                zip64_eocd.header.total_entries,
-            )
-        } else {
-            (
-                eocd.central_directory_offset as u64,
-                eocd.central_directory_size as u64,
-                eocd.total_entries as u64,
-            )
-        };
-
-        // Invoke EOCD callback
-        self.on_eocf(eocd, eocd_zip64)?;
-
-        // Read central directory
-        let central_dir_data = reader
-            .read(
-                effective_central_directory_offset,
-                effective_central_directory_size,
-            )
-            .await?;
-
-        // Parse all CDH entries and LFH entries
-        let mut cdh_offset = 0;
-        for _ in 0..effective_total_entries {
-            // Parse CDH
-            if cdh_offset + CentralDirectoryHeader::MIN_SIZE > central_dir_data.len() {
-                return Err(ZipParseError::LengthTooShort {
-                    name: "CDH",
-                    expected: cdh_offset + CentralDirectoryHeader::MIN_SIZE,
-                    found: central_dir_data.len(),
-                });
-            }
-
-            let cdh = CentralDirectoryHeader::parse(&central_dir_data[cdh_offset..], |warning| {
-                self.on_warning(warning)
-            })?;
-            cdh_offset += cdh.len();
-
-            if cdh.flags.is_central_directory_encrypted() {
-                return Err(ZipParseError::CentralDirectoryEncryptionNotSupported);
-            }
-
-            // Parse LFH
-            let lfh_full_data = {
-                let lfh_data = reader
-                    .read(
-                        cdh.local_header_offset as u64,
-                        LocalFileHeader::MIN_SIZE as u64,
-                    )
-                    .await?;
-                if lfh_data.len() < LocalFileHeader::MIN_SIZE {
-                    return Err(ZipParseError::LengthTooShort {
-                        name: "LFH",
-                        expected: LocalFileHeader::MIN_SIZE,
-                        found: lfh_data.len(),
-                    });
-                }
-
-                let file_name_len = parse_u16_le(&lfh_data[26..28]) as usize;
-                let extra_field_len = parse_u16_le(&lfh_data[28..30]) as usize;
-                let lfh_full_size = LocalFileHeader::MIN_SIZE + file_name_len + extra_field_len;
-
-                reader
-                    .read(cdh.local_header_offset as u64, lfh_full_size as u64)
-                    .await?
-            };
-            let lfh = LocalFileHeader::parse(&lfh_full_data, |warning| self.on_warning(warning))?;
-
-            let file_offset = cdh.local_header_offset as u64 + lfh.len() as u64;
-            let file_size = cdh
-                .zip64
-                .and_then(|zip64| zip64.compressed_size)
-                .unwrap_or(cdh.compressed_size as u64);
-
-            // Parse Data Descriptor if present
-            let descriptor = if lfh.flags.has_data_descriptor() {
-                // When Data Descriptor is present, the values in LFH are set to zero
-                if lfh.compressed_size != 0 {
-                    self.on_warning(ZipParseError::UnexpectedValue {
-                        name: "LFH Compressed Size",
-                        expected: 0,
-                        found: lfh.compressed_size as u64,
-                    })?;
-                }
-                if lfh.uncompressed_size != 0 {
-                    self.on_warning(ZipParseError::UnexpectedValue {
-                        name: "LFH Uncompressed Size",
-                        expected: 0,
-                        found: lfh.uncompressed_size as u64,
-                    })?;
-                }
-                if lfh.crc32 != 0 {
-                    self.on_warning(ZipParseError::UnexpectedValue {
-                        name: "LFH CRC32",
-                        expected: 0,
-                        found: lfh.crc32 as u64,
-                    })?;
-                }
-
-                // Check if Zip64 extension is used
-                // When Zip64 extension is used, the Data Descriptor uses 8-byte sizes
-                let has_zip64_extension = lfh
-                    .extra_fields
-                    .iter()
-                    .any(|ef| ef.tag == Zip64ExtendedInfo::TAG)
-                    || cdh
-                        .extra_fields
-                        .iter()
-                        .any(|ef| ef.tag == Zip64ExtendedInfo::TAG);
-
-                // Read and parse Data Descriptor
-                let result = if has_zip64_extension {
-                    DataDescriptor::parse_zip64(
-                        reader
-                            .read(
-                                file_offset + file_size,
-                                DataDescriptor::INSPECT_SIZE_ZIP64 as u64,
-                            )
-                            .await?
-                            .as_slice(),
-                    )
-                } else {
-                    DataDescriptor::parse_standard(
-                        reader
-                            .read(
-                                file_offset + file_size,
-                                DataDescriptor::INSPECT_SIZE_STANDARD as u64,
-                            )
-                            .await?
-                            .as_slice(),
-                    )
-                };
-
-                match result {
-                    Ok(descriptor) => Some(descriptor),
-                    Err(e) => {
-                        // Invoke warning callback and continue
-                        // We don't need Data Descriptor since we have CDH information
-                        self.on_warning(e)?;
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Consistency check
-            let lfh_compressed_size = if lfh.flags.has_data_descriptor() {
-                descriptor.map(|descriptor| descriptor.get_compressed_size())
-            } else {
-                lfh.zip64
-                    .and_then(|zip64| zip64.compressed_size)
-                    .or(Some(lfh.compressed_size as u64))
-            };
-            if let Some(value) = lfh_compressed_size {
-                let cdh_value = cdh
-                    .zip64
-                    .and_then(|zip64| zip64.compressed_size)
-                    .unwrap_or(cdh.compressed_size as u64);
-                if value != cdh_value {
-                    self.on_warning(ZipParseError::InconsistentValue {
-                        name: "Compressed Size",
-                        expected: cdh_value,
-                        found: value,
-                    })?;
-                }
-            }
-
-            let lfh_uncompressed_size = if lfh.flags.has_data_descriptor() {
-                descriptor.map(|descriptor| descriptor.get_uncompressed_size())
-            } else {
-                lfh.zip64
-                    .and_then(|zip64| zip64.uncompressed_size)
-                    .or(Some(lfh.uncompressed_size as u64))
-            };
-            if let Some(value) = lfh_uncompressed_size {
-                let cdh_value = cdh
-                    .zip64
-                    .and_then(|zip64| zip64.uncompressed_size)
-                    .unwrap_or(cdh.uncompressed_size as u64);
-                if value != cdh_value {
-                    self.on_warning(ZipParseError::InconsistentValue {
-                        name: "Uncompressed Size",
-                        expected: cdh_value,
-                        found: value,
-                    })?;
-                }
-            }
-
-            let lfh_crc32 = if lfh.flags.has_data_descriptor() {
-                descriptor.map(|descriptor| descriptor.get_crc32())
-            } else {
-                Some(lfh.crc32)
-            };
-            if let Some(value) = lfh_crc32 {
-                if value != cdh.crc32 {
-                    self.on_warning(ZipParseError::InconsistentValue {
-                        name: "CRC32",
-                        expected: cdh.crc32 as u64,
-                        found: value as u64,
-                    })?;
-                }
-            }
-
-            // Invoke callback for the entry
-            self.on_entry(ZipFileEntry {
-                cdh,
-                lfh,
-                descriptor,
-                file_offset,
-                file_size,
-            })?;
-        }
-
-        Ok(())
-    }
 }
 
 /// Central Directory Header (CDH)
@@ -1008,62 +1071,6 @@ impl DataDescriptor {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("Zip parse error: {0}")]
-pub enum ZipParseError {
-    #[error("Central directory encryption is not supported")]
-    CentralDirectoryEncryptionNotSupported,
-    #[error("Invalid signature for {name}, expected {expected:#010x} but found {found:#010x}")]
-    InvalidSignature {
-        name: &'static str,
-        expected: u32,
-        found: u32,
-    },
-    #[error("Invalid extra field tag for {name}, expected {expected:#06x} but found {found:#06x}")]
-    InvalidExtraFieldTag {
-        name: &'static str,
-        expected: u16,
-        found: u16,
-    },
-    #[error(
-        "Data length too short for {name}, expected at least {expected} bytes but found {found} bytes"
-    )]
-    LengthTooShort {
-        name: &'static str,
-        expected: usize,
-        found: usize,
-    },
-    #[error("Data length mismatch for {name}, expected {expected} bytes but found {found} bytes")]
-    LengthMismatch {
-        name: &'static str,
-        expected: usize,
-        found: usize,
-    },
-    #[error("Extra data remaining in {name}, {remaining} bytes left unparsed")]
-    ExtraDataRemaining {
-        name: &'static str,
-        remaining: usize,
-    },
-    #[error("Unexpected value in {name}, expected {expected} but found {found}")]
-    UnexpectedValue {
-        name: &'static str,
-        expected: u64,
-        found: u64,
-    },
-    #[error("Inconsistent values in {name}, expected {expected} but found {found}")]
-    InconsistentValue {
-        name: &'static str,
-        expected: u64,
-        found: u64,
-    },
-    #[error("Unknown data found after Data Descriptor")]
-    UnknownDataAfterDescriptor,
-    #[error("Other error: {0}")]
-    Other(String),
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-}
-
 /// End of Central Directory record (EOCD)
 #[derive(Debug, Clone)]
 pub struct EndOfCentralDirectory {
@@ -1284,6 +1291,64 @@ impl Zip64EndOfCentralDirectoryHeader {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Zip parse error: {0}")]
+pub enum ZipParseError {
+    #[error("Central directory encryption is not supported")]
+    CentralDirectoryEncryptionNotSupported,
+    #[error("Multiple disk ZIP files are not supported")]
+    MultipleDiskNotSupported,
+    #[error("Invalid signature for {name}, expected {expected:#010x} but found {found:#010x}")]
+    InvalidSignature {
+        name: &'static str,
+        expected: u32,
+        found: u32,
+    },
+    #[error("Invalid extra field tag for {name}, expected {expected:#06x} but found {found:#06x}")]
+    InvalidExtraFieldTag {
+        name: &'static str,
+        expected: u16,
+        found: u16,
+    },
+    #[error(
+        "Data length too short for {name}, expected at least {expected} bytes but found {found} bytes"
+    )]
+    LengthTooShort {
+        name: &'static str,
+        expected: usize,
+        found: usize,
+    },
+    #[error("Data length mismatch for {name}, expected {expected} bytes but found {found} bytes")]
+    LengthMismatch {
+        name: &'static str,
+        expected: usize,
+        found: usize,
+    },
+    #[error("Extra data remaining in {name}, {remaining} bytes left unparsed")]
+    ExtraDataRemaining {
+        name: &'static str,
+        remaining: usize,
+    },
+    #[error("Unexpected value in {name}, expected {expected} but found {found}")]
+    UnexpectedValue {
+        name: &'static str,
+        expected: u64,
+        found: u64,
+    },
+    #[error("Inconsistent values in {name}, expected {expected} but found {found}")]
+    InconsistentValue {
+        name: &'static str,
+        expected: u64,
+        found: u64,
+    },
+    #[error("Unknown data found after Data Descriptor")]
+    UnknownDataAfterDescriptor,
+    #[error("Other error: {0}")]
+    Other(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+}
+
 /// Parse a u64 little-endian integer from bytes
 fn parse_u64_le(data: &[u8]) -> u64 {
     u64::from_le_bytes([
@@ -1316,6 +1381,10 @@ mod tests {
     }
 
     impl ZipReader for MockReader {
+        async fn get_size(&mut self) -> Result<u64, io::Error> {
+            Ok(self.data.len() as u64)
+        }
+
         async fn read(&mut self, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
             let offset = offset as usize;
             let size = size as usize;
