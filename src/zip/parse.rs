@@ -10,22 +10,44 @@ pub trait ZipReader {
     ) -> impl std::future::Future<Output = Result<Vec<u8>, io::Error>>;
 }
 
-/// Parsed zip file
+/// Zip file entry combining CDH, LFH, and optional Data Descriptor
 #[derive(Debug, Clone)]
-pub struct ZipFile {
-    pub entries: Vec<ZipFileEntry>,
-    pub eocd: EndOfCentralDirectory,
-    pub eocd_zip64: Option<(
-        Zip64EndOfCentralDirectory,
-        Option<Zip64EndOfCentralDirectoryLocator>,
-    )>,
+pub struct ZipFileEntry {
+    /// Central Directory Header
+    pub cdh: CentralDirectoryHeader,
+    /// Local File Header
+    pub lfh: LocalFileHeader,
+    /// Optional Data Descriptor
+    pub descriptor: Option<DataDescriptor>,
+    /// Offset of the compressed file data within the zip file
+    pub file_offset: u64,
+    /// Size of the compressed file data within the zip file
+    pub file_size: u64,
 }
 
-impl ZipFile {
+/// Trait for parsing zip files
+pub trait ZipFileParser: Sized {
     const ZIP64_FALLBACK_SEARCH_SIZE: u64 = 1024 * 1024; // 1 MiB
 
+    fn on_eocf(
+        &mut self,
+        eocd: EndOfCentralDirectory,
+        zip64_eocd: Option<(
+            Zip64EndOfCentralDirectory,
+            Option<Zip64EndOfCentralDirectoryLocator>,
+        )>,
+    ) -> Result<Self, ZipParseError>;
+
+    fn on_entry(&mut self, entry: ZipFileEntry) -> Result<Self, ZipParseError>;
+
+    fn on_warning(&mut self, warning: ZipParseError) -> Result<Self, ZipParseError>;
+
     /// Parse a complete zip file
-    pub async fn parse<R: ZipReader>(reader: &mut R, file_size: u64) -> Result<Self, io::Error> {
+    async fn parse<R: ZipReader>(
+        &mut self,
+        reader: &mut R,
+        file_size: u64,
+    ) -> Result<(), ZipParseError> {
         // Find EOCD by reading backwards from the end
         // EOCD is at least 22 bytes, at most 22 + 65535 (max comment length)
         let search_size = std::cmp::min(65557, file_size);
@@ -43,10 +65,9 @@ impl ZipFile {
         }
 
         let eocd_offset = eocd_offset.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("EOCD signature not found in the last {search_size} bytes"),
-            )
+            ZipParseError::Other(format!(
+                "EOCD signature not found in the last {search_size} bytes"
+            ))
         })?;
 
         // Parse EOCD
@@ -62,12 +83,9 @@ impl ZipFile {
             let zip64_eocd_locator = {
                 // Read Zip64 EOCD Locator (20 bytes before EOCD)
                 if eocd_offset < Zip64EndOfCentralDirectoryLocator::SIZE as u64 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "Not enough space before EOCD at offset {eocd_offset} to read Zip64 EOCD Locator"
-                        ),
-                    ));
+                    return Err(ZipParseError::Other(format!(
+                        "Not enough space before EOCD at offset {eocd_offset} to read Zip64 EOCD Locator"
+                    )));
                 }
                 let zip64_eocd_locator_data = reader
                     .read(
@@ -102,32 +120,38 @@ impl ZipFile {
                     }
                 }
                 zip64_eocd_offset.ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "Zip64 EOCD signature not found before EOCD within last {} bytes from EOCD at offset {eocd_offset}",
-                            Self::ZIP64_FALLBACK_SEARCH_SIZE
-                        ),
-                    )
+                    ZipParseError::Other(format!(
+                        "Zip64 EOCD signature not found before EOCD within last {} bytes from EOCD at offset {eocd_offset}",
+                        Self::ZIP64_FALLBACK_SEARCH_SIZE
+                    ))
                 })?
             };
 
             // Read and parse Zip64 EOCD
-            let zip64_eocd_header_data = reader.read(zip64_eocd_offset, 56).await?;
+            let zip64_eocd_header_data = reader
+                .read(
+                    zip64_eocd_offset,
+                    Zip64EndOfCentralDirectoryHeader::SIZE as u64,
+                )
+                .await?;
             let zip64_eocd_header =
                 Zip64EndOfCentralDirectoryHeader::parse(&zip64_eocd_header_data)?;
 
             // Read extensible data sector if present
             let extensible_data_size = zip64_eocd_header.size_of_record - 44; // 44 bytes is size without extensible data
             let extensible_data = if extensible_data_size > 0 {
-                reader
-                    .read(zip64_eocd_offset + 56, extensible_data_size)
-                    .await?
+                Some((
+                    zip64_eocd_offset + Zip64EndOfCentralDirectoryHeader::SIZE as u64,
+                    extensible_data_size,
+                ))
             } else {
-                Vec::new()
+                None
             };
 
-            let zip64_eocd = Zip64EndOfCentralDirectory(zip64_eocd_header, extensible_data);
+            let zip64_eocd = Zip64EndOfCentralDirectory {
+                header: zip64_eocd_header,
+                extensible_data,
+            };
             Some((zip64_eocd, zip64_eocd_locator))
         } else {
             None
@@ -140,9 +164,9 @@ impl ZipFile {
             effective_total_entries,
         ) = if let Some((zip64_eocd, _)) = &eocd_zip64 {
             (
-                zip64_eocd.0.central_directory_offset,
-                zip64_eocd.0.central_directory_size,
-                zip64_eocd.0.total_entries,
+                zip64_eocd.header.central_directory_offset,
+                zip64_eocd.header.central_directory_size,
+                zip64_eocd.header.total_entries,
             )
         } else {
             (
@@ -151,6 +175,9 @@ impl ZipFile {
                 eocd.total_entries as u64,
             )
         };
+
+        // Invoke EOCD callback
+        self.on_eocf(eocd, eocd_zip64)?;
 
         // Read central directory
         let central_dir_data = reader
@@ -161,24 +188,23 @@ impl ZipFile {
             .await?;
 
         // Parse all CDH entries and LFH entries
-        let mut entries = Vec::new();
         let mut cdh_offset = 0;
-
-        for idx in 0..effective_total_entries {
+        for _ in 0..effective_total_entries {
             // Parse CDH
             if cdh_offset + CentralDirectoryHeader::MIN_SIZE > central_dir_data.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "CDH {idx} header too short, expected at least {} bytes but got {}",
-                        CentralDirectoryHeader::MIN_SIZE,
-                        central_dir_data.len() - cdh_offset
-                    ),
-                ));
+                return Err(ZipParseError::LengthTooShort {
+                    name: "CDH",
+                    expected: cdh_offset + CentralDirectoryHeader::MIN_SIZE,
+                    found: central_dir_data.len(),
+                });
             }
 
             let cdh = CentralDirectoryHeader::parse(&central_dir_data[cdh_offset..])?;
             cdh_offset += cdh.len();
+
+            if cdh.flags.is_central_directory_encrypted() {
+                return Err(ZipParseError::CentralDirectoryEncryptionNotSupported);
+            }
 
             // Parse LFH
             let lfh_full_data = {
@@ -189,14 +215,11 @@ impl ZipFile {
                     )
                     .await?;
                 if lfh_data.len() < LocalFileHeader::MIN_SIZE {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "LFH {idx} header too short, expected {} bytes but got {}",
-                            LocalFileHeader::MIN_SIZE,
-                            lfh_data.len()
-                        ),
-                    ));
+                    return Err(ZipParseError::LengthTooShort {
+                        name: "LFH",
+                        expected: LocalFileHeader::MIN_SIZE,
+                        found: lfh_data.len(),
+                    });
                 }
 
                 let file_name_len = parse_u16_le(&lfh_data[26..28]) as usize;
@@ -207,17 +230,56 @@ impl ZipFile {
                     .read(cdh.local_header_offset as u64, lfh_full_size as u64)
                     .await?
             };
-            let lfh = LocalFileHeader::parse(&lfh_full_data, cdh.local_header_offset as u64)?;
+            let lfh = LocalFileHeader::parse(&lfh_full_data)?;
+
+            let file_offset = cdh.local_header_offset as u64 + lfh.len() as u64;
+            let file_size = cdh
+                .zip64
+                .and_then(|zip64| zip64.compressed_size)
+                .unwrap_or(cdh.compressed_size as u64);
 
             // Parse Data Descriptor if present
             let descriptor = if lfh.flags.has_data_descriptor() {
-                let has_zip64_extension = lfh.extra_fields.iter().any(|ef| ef.tag == 0x0001)
-                    || cdh.extra_fields.iter().any(|ef| ef.tag == 0x0001);
+                // When Data Descriptor is present, the values in LFH are set to zero
+                if lfh.compressed_size != 0 {
+                    self.on_warning(ZipParseError::UnexpectedValue {
+                        name: "LFH Compressed Size",
+                        expected: 0,
+                        found: lfh.compressed_size as u64,
+                    })?;
+                }
+                if lfh.uncompressed_size != 0 {
+                    self.on_warning(ZipParseError::UnexpectedValue {
+                        name: "LFH Uncompressed Size",
+                        expected: 0,
+                        found: lfh.uncompressed_size as u64,
+                    })?;
+                }
+                if lfh.crc32 != 0 {
+                    self.on_warning(ZipParseError::UnexpectedValue {
+                        name: "LFH CRC32",
+                        expected: 0,
+                        found: lfh.crc32 as u64,
+                    })?;
+                }
+
+                // Check if Zip64 extension is used
+                // When Zip64 extension is used, the Data Descriptor uses 8-byte sizes
+                let has_zip64_extension = lfh
+                    .extra_fields
+                    .iter()
+                    .any(|ef| ef.tag == Zip64ExtendedInfo::TAG)
+                    || cdh
+                        .extra_fields
+                        .iter()
+                        .any(|ef| ef.tag == Zip64ExtendedInfo::TAG);
+
+                // Read and parse Data Descriptor
                 let result = if has_zip64_extension {
                     DataDescriptor::parse_zip64(
                         reader
                             .read(
-                                lfh.file_data_offset + lfh.file_data_size as u64,
+                                file_offset + file_size,
                                 DataDescriptor::INSPECT_SIZE_ZIP64 as u64,
                             )
                             .await?
@@ -227,40 +289,528 @@ impl ZipFile {
                     DataDescriptor::parse_standard(
                         reader
                             .read(
-                                lfh.file_data_offset + lfh.file_data_size as u64,
+                                file_offset + file_size,
                                 DataDescriptor::INSPECT_SIZE_STANDARD as u64,
                             )
                             .await?
                             .as_slice(),
                     )
                 };
-                Some(result)
+
+                match result {
+                    Ok(descriptor) => Some(descriptor),
+                    Err(e) => {
+                        // Invoke warning callback and continue
+                        // We don't need Data Descriptor since we have CDH information
+                        self.on_warning(e)?;
+                        None
+                    }
+                }
             } else {
                 None
             };
 
-            entries.push(ZipFileEntry {
+            // Consistency check
+            let lfh_compressed_size = if lfh.flags.has_data_descriptor() {
+                descriptor.map(|descriptor| descriptor.get_compressed_size())
+            } else {
+                lfh.zip64
+                    .and_then(|zip64| zip64.compressed_size)
+                    .or(Some(lfh.compressed_size as u64))
+            };
+            if let Some(value) = lfh_compressed_size {
+                let cdh_value = cdh
+                    .zip64
+                    .and_then(|zip64| zip64.compressed_size)
+                    .unwrap_or(cdh.compressed_size as u64);
+                if value != cdh_value {
+                    self.on_warning(ZipParseError::InconsistentValue {
+                        name: "Compressed Size",
+                        expected: cdh_value,
+                        found: value,
+                    })?;
+                }
+            }
+
+            let lfh_uncompressed_size = if lfh.flags.has_data_descriptor() {
+                descriptor.map(|descriptor| descriptor.get_uncompressed_size())
+            } else {
+                lfh.zip64
+                    .and_then(|zip64| zip64.uncompressed_size)
+                    .or(Some(lfh.uncompressed_size as u64))
+            };
+            if let Some(value) = lfh_uncompressed_size {
+                let cdh_value = cdh
+                    .zip64
+                    .and_then(|zip64| zip64.uncompressed_size)
+                    .unwrap_or(cdh.uncompressed_size as u64);
+                if value != cdh_value {
+                    self.on_warning(ZipParseError::InconsistentValue {
+                        name: "Uncompressed Size",
+                        expected: cdh_value,
+                        found: value,
+                    })?;
+                }
+            }
+
+            let lfh_crc32 = if lfh.flags.has_data_descriptor() {
+                descriptor.map(|descriptor| descriptor.get_crc32())
+            } else {
+                Some(lfh.crc32)
+            };
+            if let Some(value) = lfh_crc32 {
+                if value != cdh.crc32 {
+                    self.on_warning(ZipParseError::InconsistentValue {
+                        name: "CRC32",
+                        expected: cdh.crc32 as u64,
+                        found: value as u64,
+                    })?;
+                }
+            }
+
+            // Invoke callback for the entry
+            self.on_entry(ZipFileEntry {
                 cdh,
                 lfh,
-                descriptor: (),
-                data_offset: (),
-                data_size: (),
-            });
+                descriptor,
+                file_offset,
+                file_size,
+            })?;
         }
 
-        Ok(ZipFile { entries, eocd })
+        Ok(())
     }
 }
 
+/// Central Directory Header (CDH)
 #[derive(Debug, Clone)]
-pub struct ZipFileEntry {
-    pub cdh: CentralDirectoryHeader,
-    pub lfh: LocalFileHeader,
-    pub descriptor: Option<DataDescriptor>,
-    pub data_offset: u64,
-    pub data_size: u32,
+pub struct CentralDirectoryHeader {
+    /// Central file header signature = 0x02014b50
+    pub signature: u32,
+    /// Version made by
+    pub version_made_by: u16,
+    /// Version needed to extract (minimum)
+    pub version_needed: u16,
+    /// General purpose bit flag
+    pub flags: GeneralPurposeBitFlag,
+    /// Compression method
+    pub compression_method: u16,
+    /// Last mod file time
+    pub last_mod_time: u16,
+    /// Last mod file date
+    pub last_mod_date: u16,
+    /// CRC-32
+    pub crc32: u32,
+    /// Compressed size
+    pub compressed_size: u32,
+    /// Uncompressed size
+    pub uncompressed_size: u32,
+    /// File name length
+    pub file_name_length: u16,
+    /// Extra field length
+    pub extra_field_length: u16,
+    /// File comment length
+    pub file_comment_length: u16,
+    /// Disk number start
+    pub disk_number_start: u16,
+    /// Internal file attributes
+    pub internal_file_attributes: u16,
+    /// External file attributes
+    pub external_file_attributes: u32,
+    /// Relative offset of local header
+    pub local_header_offset: u32,
+    /// File name
+    pub file_name: Vec<u8>,
+    /// Parsed extra fields
+    pub extra_fields: Vec<ExtraField>,
+    /// File comment
+    pub file_comment: Vec<u8>,
+    /// Optional Zip64 extended info
+    pub zip64: Option<Zip64ExtendedInfo>,
 }
 
+impl CentralDirectoryHeader {
+    /// Minimum size of CDH without variable-length fields
+    pub const MIN_SIZE: usize = 46;
+
+    /// Get total size of CDH including variable-length fields
+    pub fn len(&self) -> usize {
+        Self::MIN_SIZE
+            + self.file_name_length as usize
+            + self.extra_field_length as usize
+            + self.file_comment_length as usize
+    }
+
+    /// Parse a Central Directory Header from binary data
+    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
+        if data.len() < Self::MIN_SIZE {
+            return Err(ZipParseError::LengthTooShort {
+                name: "CDH",
+                expected: Self::MIN_SIZE,
+                found: data.len(),
+            });
+        }
+
+        let signature = parse_u32_le(&data[0..4]);
+        if signature != 0x02014b50 {
+            return Err(ZipParseError::InvalidSignature {
+                name: "CDH",
+                expected: 0x02014b50,
+                found: signature,
+            });
+        }
+
+        let version_made_by = parse_u16_le(&data[4..6]);
+        let version_needed = parse_u16_le(&data[6..8]);
+        let flags = GeneralPurposeBitFlag(parse_u16_le(&data[8..10]));
+        let compression_method = parse_u16_le(&data[10..12]);
+        let last_mod_time = parse_u16_le(&data[12..14]);
+        let last_mod_date = parse_u16_le(&data[14..16]);
+        let crc32 = parse_u32_le(&data[16..20]);
+        let compressed_size = parse_u32_le(&data[20..24]);
+        let uncompressed_size = parse_u32_le(&data[24..28]);
+        let file_name_length = parse_u16_le(&data[28..30]) as usize;
+        let extra_field_length = parse_u16_le(&data[30..32]) as usize;
+        let file_comment_length = parse_u16_le(&data[32..34]) as usize;
+        let disk_number_start = parse_u16_le(&data[34..36]);
+        let internal_file_attributes = parse_u16_le(&data[36..38]);
+        let external_file_attributes = parse_u32_le(&data[38..42]);
+        let local_header_offset = parse_u32_le(&data[42..46]);
+
+        let expected_len = 46 + file_name_length + extra_field_length + file_comment_length;
+        if data.len() < expected_len {
+            return Err(ZipParseError::LengthTooShort {
+                name: "CDH",
+                expected: expected_len,
+                found: data.len(),
+            });
+        }
+
+        let offset = 46;
+        let file_name = data[offset..offset + file_name_length].to_vec();
+        let offset = offset + file_name_length;
+        let extra_field_data = data[offset..offset + extra_field_length].to_vec();
+        let offset = offset + extra_field_length;
+        let file_comment = data[offset..offset + file_comment_length].to_vec();
+
+        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
+
+        let zip64 = extra_fields
+            .iter()
+            .find(|ef| ef.tag == Zip64ExtendedInfo::TAG)
+            .map(|ef| {
+                Zip64ExtendedInfo::parse(
+                    ef,
+                    uncompressed_size == 0xFFFFFFFF,
+                    compressed_size == 0xFFFFFFFF,
+                    local_header_offset == 0xFFFFFFFF,
+                    disk_number_start == 0xFFFF,
+                )
+            })
+            .transpose()?;
+
+        Ok(CentralDirectoryHeader {
+            signature,
+            version_made_by,
+            version_needed,
+            flags,
+            compression_method,
+            last_mod_time,
+            last_mod_date,
+            crc32,
+            compressed_size,
+            uncompressed_size,
+            file_name_length: file_name_length as u16,
+            extra_field_length: extra_field_length as u16,
+            file_comment_length: file_comment_length as u16,
+            disk_number_start,
+            internal_file_attributes,
+            external_file_attributes,
+            local_header_offset,
+            file_name,
+            extra_fields,
+            file_comment,
+            zip64,
+        })
+    }
+}
+
+/// Local File Header (LFH)
+#[derive(Debug, Clone)]
+pub struct LocalFileHeader {
+    /// Local file header signature = 0x04034b50
+    pub signature: u32,
+    /// Version needed to extract (minimum)
+    pub version_needed: u16,
+    /// General purpose bit flag
+    pub flags: GeneralPurposeBitFlag,
+    /// Compression method
+    pub compression_method: u16,
+    /// Last mod file time
+    pub last_mod_time: u16,
+    /// Last mod file date
+    pub last_mod_date: u16,
+    /// CRC-32
+    pub crc32: u32,
+    /// Compressed size
+    pub compressed_size: u32,
+    /// Uncompressed size
+    pub uncompressed_size: u32,
+    /// File name length
+    pub file_name_length: u16,
+    /// Extra field length
+    pub extra_field_length: u16,
+    /// File name
+    pub file_name: Vec<u8>,
+    /// Parsed extra fields
+    pub extra_fields: Vec<ExtraField>,
+    /// Optional Zip64 extended info
+    pub zip64: Option<Zip64ExtendedInfo>,
+}
+
+impl LocalFileHeader {
+    /// Minimum size of LFH without variable-length fields
+    pub const MIN_SIZE: usize = 30;
+
+    /// Get total size of LFH including variable-length fields
+    pub fn len(&self) -> usize {
+        Self::MIN_SIZE + self.file_name_length as usize + self.extra_field_length as usize
+    }
+
+    /// Parse a Local File Header from binary data
+    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
+        if data.len() < Self::MIN_SIZE {
+            return Err(ZipParseError::LengthTooShort {
+                name: "LFH",
+                expected: Self::MIN_SIZE,
+                found: data.len(),
+            });
+        }
+
+        let signature = parse_u32_le(&data[0..4]);
+        if signature != 0x04034b50 {
+            return Err(ZipParseError::InvalidSignature {
+                name: "LFH",
+                expected: 0x04034b50,
+                found: signature,
+            });
+        }
+
+        let version_needed = parse_u16_le(&data[4..6]);
+        let flags = GeneralPurposeBitFlag(parse_u16_le(&data[6..8]));
+        let compression_method = parse_u16_le(&data[8..10]);
+        let last_mod_time = parse_u16_le(&data[10..12]);
+        let last_mod_date = parse_u16_le(&data[12..14]);
+        let crc32 = parse_u32_le(&data[14..18]);
+        let compressed_size = parse_u32_le(&data[18..22]);
+        let uncompressed_size = parse_u32_le(&data[22..26]);
+        let file_name_length = parse_u16_le(&data[26..28]) as usize;
+        let extra_field_length = parse_u16_le(&data[28..30]) as usize;
+
+        let expected_len = 30 + file_name_length + extra_field_length;
+        if data.len() < expected_len {
+            return Err(ZipParseError::LengthTooShort {
+                name: "LFH",
+                expected: expected_len,
+                found: data.len(),
+            });
+        }
+
+        let file_name = data[30..30 + file_name_length].to_vec();
+        let extra_field_data =
+            data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
+
+        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
+
+        let zip64 = extra_fields
+            .iter()
+            .find(|ef| ef.tag == Zip64ExtendedInfo::TAG)
+            .map(|ef| {
+                Zip64ExtendedInfo::parse(
+                    ef,
+                    uncompressed_size == 0xFFFFFFFF,
+                    compressed_size == 0xFFFFFFFF,
+                    false,
+                    false,
+                )
+            })
+            .transpose()?;
+
+        Ok(LocalFileHeader {
+            signature,
+            version_needed,
+            flags,
+            compression_method,
+            last_mod_time,
+            last_mod_date,
+            crc32,
+            compressed_size,
+            uncompressed_size,
+            file_name_length: file_name_length as u16,
+            extra_field_length: extra_field_length as u16,
+            file_name,
+            extra_fields,
+            zip64,
+        })
+    }
+}
+
+/// General Purpose Bit Flag
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct GeneralPurposeBitFlag(pub u16);
+
+impl GeneralPurposeBitFlag {
+    /// Check if the data descriptor flag is set
+    pub fn has_data_descriptor(&self) -> bool {
+        (self.0 & 0x0008) != 0
+    }
+
+    /// Check if the UTF-8 encoding flag (Language encoding flag, EFS) is set
+    pub fn is_utf8(&self) -> bool {
+        (self.0 & 0x0800) != 0
+    }
+
+    /// Check if the central directory encryption flag is set
+    pub fn is_central_directory_encrypted(&self) -> bool {
+        (self.0 & 0x2000) != 0
+    }
+}
+
+/// Extra field record within a LFH or CDH
+#[derive(Debug, Clone)]
+pub struct ExtraField {
+    /// Header ID (tag)
+    pub tag: u16,
+    /// Size of the data field
+    pub size: u16,
+    /// Field data
+    pub data: Vec<u8>,
+}
+
+impl ExtraField {
+    /// Parse extra fields from raw bytes
+    fn parse_all(data: &[u8]) -> Result<Vec<Self>, ZipParseError> {
+        let mut fields = Vec::new();
+        let mut offset = 0;
+
+        while offset + 4 <= data.len() {
+            let tag = parse_u16_le(&data[offset..offset + 2]);
+            let size = parse_u16_le(&data[offset + 2..offset + 4]);
+            offset += 4;
+
+            if offset + size as usize > data.len() {
+                return Err(ZipParseError::LengthMismatch {
+                    name: "ExtraField",
+                    expected: size as usize,
+                    found: data.len() - offset,
+                });
+            }
+
+            let field_data = data[offset..offset + size as usize].to_vec();
+            offset += size as usize;
+
+            fields.push(ExtraField {
+                tag,
+                size,
+                data: field_data,
+            });
+        }
+
+        if offset != data.len() {
+            return Err(ZipParseError::ExtraDataRemaining {
+                name: "ExtraField",
+                remaining: data.len() - offset,
+            });
+        }
+
+        Ok(fields)
+    }
+}
+
+/// Zip64 Extended Information Extra Field
+#[derive(Debug, Clone, Copy)]
+pub struct Zip64ExtendedInfo {
+    /// Uncompressed size
+    pub uncompressed_size: Option<u64>,
+    /// Compressed size
+    pub compressed_size: Option<u64>,
+    /// Relative offset of local header
+    pub relative_offset: Option<u64>,
+    /// Disk start number
+    pub disk_start_number: Option<u32>,
+}
+
+impl Zip64ExtendedInfo {
+    pub const TAG: u16 = 0x0001;
+
+    pub fn parse(
+        field: &ExtraField,
+        has_uncompressed_size: bool,
+        has_compressed_size: bool,
+        has_relative_offset: bool,
+        has_disk_start_number: bool,
+    ) -> Result<Self, ZipParseError> {
+        if field.tag != Self::TAG {
+            return Err(ZipParseError::InvalidExtraFieldTag {
+                name: "Zip64ExtendedInfo",
+                expected: Self::TAG,
+                found: field.tag,
+            });
+        }
+
+        let expected_len = (if has_uncompressed_size { 8 } else { 0 })
+            + (if has_compressed_size { 8 } else { 0 })
+            + (if has_relative_offset { 8 } else { 0 })
+            + (if has_disk_start_number { 4 } else { 0 });
+        if (field.size as usize) < expected_len {
+            // We allow longer lengths since in LFH that uses both Zip64 and Data Descriptor, there is a possibility that the Zip64 field exists with 16 bytes while the size field records 0.
+            return Err(ZipParseError::LengthTooShort {
+                name: "Zip64ExtendedInfo",
+                expected: expected_len,
+                found: field.size as usize,
+            });
+        }
+
+        let mut cursor = 0;
+        let uncompressed_size = if has_uncompressed_size {
+            let size = parse_u64_le(&field.data[cursor..cursor + 8]);
+            cursor += 8;
+            Some(size)
+        } else {
+            None
+        };
+        let compressed_size = if has_compressed_size {
+            let size = parse_u64_le(&field.data[cursor..cursor + 8]);
+            cursor += 8;
+            Some(size)
+        } else {
+            None
+        };
+        let relative_offset = if has_relative_offset {
+            let offset = parse_u64_le(&field.data[cursor..cursor + 8]);
+            cursor += 8;
+            Some(offset)
+        } else {
+            None
+        };
+        let disk_start_number = if has_disk_start_number {
+            let disk_number = parse_u32_le(&field.data[cursor..cursor + 4]);
+            Some(disk_number)
+        } else {
+            None
+        };
+
+        Ok(Zip64ExtendedInfo {
+            uncompressed_size,
+            compressed_size,
+            relative_offset,
+            disk_start_number,
+        })
+    }
+}
+
+/// Data Descriptor
 #[derive(Debug, Clone, Copy)]
 pub enum DataDescriptor {
     Standard {
@@ -277,7 +827,7 @@ pub enum DataDescriptor {
     },
 }
 
-/// Data Descriptor
+/// Data Descriptor parser implementation
 ///
 /// A Data Descriptor can either have a signature or not. If it does not have a signature, there is a small possibility that the value of the first field, CRC32, coincidentally matches the signature.
 /// Therefore, whether a Data Descriptor has a signature is determined not by the signature's value, but by where the section immediately following the Data Descriptor begins.
@@ -342,16 +892,13 @@ impl DataDescriptor {
     }
 
     /// Parse Data Descriptor from binary data
-    pub fn parse_standard(data: &[u8]) -> Result<Self, io::Error> {
+    pub fn parse_standard(data: &[u8]) -> Result<Self, ZipParseError> {
         if data.len() < Self::INSPECT_SIZE_STANDARD {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Data Descriptor data too short, expected at least {} bytes but got {}",
-                    Self::INSPECT_SIZE_STANDARD,
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthTooShort {
+                name: "Data Descriptor",
+                expected: Self::INSPECT_SIZE_STANDARD,
+                found: data.len(),
+            });
         }
 
         let has_signature = if Self::is_next_section_signature(parse_u32_le(&data[16..20])) {
@@ -359,10 +906,7 @@ impl DataDescriptor {
         } else if Self::is_next_section_signature(parse_u32_le(&data[12..16])) {
             false
         } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unknown data after Data Descriptor, cannot determine presence of signature",
-            ));
+            return Err(ZipParseError::UnknownDataAfterDescriptor);
         };
 
         let signature = if has_signature {
@@ -373,12 +917,11 @@ impl DataDescriptor {
         if let Some(signature) = signature
             && signature != 0x08074b50
         {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid Data Descriptor signature, expected 0x08074b50 but got {signature:#010x}"
-                ),
-            ));
+            return Err(ZipParseError::InvalidSignature {
+                name: "Data Descriptor",
+                expected: 0x08074b50,
+                found: signature,
+            });
         }
 
         let content = if has_signature {
@@ -399,16 +942,13 @@ impl DataDescriptor {
     }
 
     /// Parse Zip64 Data Descriptor from binary data
-    pub fn parse_zip64(data: &[u8]) -> Result<Self, io::Error> {
+    pub fn parse_zip64(data: &[u8]) -> Result<Self, ZipParseError> {
         if data.len() < Self::INSPECT_SIZE_ZIP64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Zip64 Data Descriptor data too short, expected at least {} bytes but got {}",
-                    Self::INSPECT_SIZE_ZIP64,
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthTooShort {
+                name: "Zip64 Data Descriptor",
+                expected: Self::INSPECT_SIZE_ZIP64,
+                found: data.len(),
+            });
         }
 
         let has_signature = if Self::is_next_section_signature(parse_u32_le(&data[24..28])) {
@@ -416,10 +956,7 @@ impl DataDescriptor {
         } else if Self::is_next_section_signature(parse_u32_le(&data[20..24])) {
             false
         } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unknown data after Zip64 Data Descriptor, cannot determine presence of signature",
-            ));
+            return Err(ZipParseError::UnknownDataAfterDescriptor);
         };
 
         let signature = if has_signature {
@@ -430,12 +967,11 @@ impl DataDescriptor {
         if let Some(signature) = signature
             && signature != 0x08074b50
         {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid Zip64 Data Descriptor signature, expected 0x08074b50 but got {signature:#010x}"
-                ),
-            ));
+            return Err(ZipParseError::InvalidSignature {
+                name: "Zip64 Data Descriptor",
+                expected: 0x08074b50,
+                found: signature,
+            });
         }
 
         let content = if has_signature {
@@ -460,144 +996,60 @@ impl DataDescriptor {
     }
 }
 
-/// Central Directory Header (CDH)
-#[derive(Debug, Clone)]
-pub struct CentralDirectoryHeader {
-    /// Central file header signature = 0x02014b50
-    pub signature: u32,
-    /// Version made by
-    pub version_made_by: u16,
-    /// Version needed to extract (minimum)
-    pub version_needed: u16,
-    /// General purpose bit flag
-    pub flags: GeneralPurposeBitFlag,
-    /// Compression method
-    pub compression_method: u16,
-    /// Last mod file time
-    pub last_mod_time: u16,
-    /// Last mod file date
-    pub last_mod_date: u16,
-    /// CRC-32
-    pub crc32: u32,
-    /// Compressed size
-    pub compressed_size: u32,
-    /// Uncompressed size
-    pub uncompressed_size: u32,
-    /// File name length
-    pub file_name_length: u16,
-    /// Extra field length
-    pub extra_field_length: u16,
-    /// File comment length
-    pub file_comment_length: u16,
-    /// Disk number start
-    pub disk_number_start: u16,
-    /// Internal file attributes
-    pub internal_file_attributes: u16,
-    /// External file attributes
-    pub external_file_attributes: u32,
-    /// Relative offset of local header
-    pub local_header_offset: u32,
-    /// File name
-    pub file_name: Vec<u8>,
-    /// Parsed extra fields
-    pub extra_fields: Vec<ExtraField>,
-    /// File comment
-    pub file_comment: Vec<u8>,
-}
-
-impl CentralDirectoryHeader {
-    /// Minimum size of CDH without variable-length fields
-    pub const MIN_SIZE: usize = 46;
-
-    /// Get total size of CDH including variable-length fields
-    pub fn len(&self) -> usize {
-        Self::MIN_SIZE
-            + self.file_name_length as usize
-            + self.extra_field_length as usize
-            + self.file_comment_length as usize
-    }
-
-    /// Parse a Central Directory Header from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, io::Error> {
-        if data.len() < Self::MIN_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "CDH data too short, expected at least {} bytes but got {}",
-                    Self::MIN_SIZE,
-                    data.len()
-                ),
-            ));
-        }
-
-        let signature = parse_u32_le(&data[0..4]);
-        if signature != 0x02014b50 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid CDH signature, expected 0x02014b50 but got {signature:#010x}"),
-            ));
-        }
-
-        let version_made_by = parse_u16_le(&data[4..6]);
-        let version_needed = parse_u16_le(&data[6..8]);
-        let flags = GeneralPurposeBitFlag(parse_u16_le(&data[8..10]));
-        let compression_method = parse_u16_le(&data[10..12]);
-        let last_mod_time = parse_u16_le(&data[12..14]);
-        let last_mod_date = parse_u16_le(&data[14..16]);
-        let crc32 = parse_u32_le(&data[16..20]);
-        let compressed_size = parse_u32_le(&data[20..24]);
-        let uncompressed_size = parse_u32_le(&data[24..28]);
-        let file_name_length = parse_u16_le(&data[28..30]) as usize;
-        let extra_field_length = parse_u16_le(&data[30..32]) as usize;
-        let file_comment_length = parse_u16_le(&data[32..34]) as usize;
-        let disk_number_start = parse_u16_le(&data[34..36]);
-        let internal_file_attributes = parse_u16_le(&data[36..38]);
-        let external_file_attributes = parse_u32_le(&data[38..42]);
-        let local_header_offset = parse_u32_le(&data[42..46]);
-
-        let expected_len = 46 + file_name_length + extra_field_length + file_comment_length;
-        if data.len() < expected_len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "CDH data incomplete, expected {expected_len} bytes but got {}",
-                    data.len()
-                ),
-            ));
-        }
-
-        let offset = 46;
-        let file_name = data[offset..offset + file_name_length].to_vec();
-        let offset = offset + file_name_length;
-        let extra_field_data = data[offset..offset + extra_field_length].to_vec();
-        let offset = offset + extra_field_length;
-        let file_comment = data[offset..offset + file_comment_length].to_vec();
-
-        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
-
-        Ok(CentralDirectoryHeader {
-            signature,
-            version_made_by,
-            version_needed,
-            flags,
-            compression_method,
-            last_mod_time,
-            last_mod_date,
-            crc32,
-            compressed_size,
-            uncompressed_size,
-            file_name_length: file_name_length as u16,
-            extra_field_length: extra_field_length as u16,
-            file_comment_length: file_comment_length as u16,
-            disk_number_start,
-            internal_file_attributes,
-            external_file_attributes,
-            local_header_offset,
-            file_name,
-            extra_fields,
-            file_comment,
-        })
-    }
+#[derive(Debug, thiserror::Error)]
+#[error("Zip parse error: {0}")]
+pub enum ZipParseError {
+    #[error("Central directory encryption is not supported")]
+    CentralDirectoryEncryptionNotSupported,
+    #[error("Invalid signature for {name}, expected {expected:#010x} but found {found:#010x}")]
+    InvalidSignature {
+        name: &'static str,
+        expected: u32,
+        found: u32,
+    },
+    #[error("Invalid extra field tag for {name}, expected {expected:#06x} but found {found:#06x}")]
+    InvalidExtraFieldTag {
+        name: &'static str,
+        expected: u16,
+        found: u16,
+    },
+    #[error(
+        "Data length too short for {name}, expected at least {expected} bytes but found {found} bytes"
+    )]
+    LengthTooShort {
+        name: &'static str,
+        expected: usize,
+        found: usize,
+    },
+    #[error("Data length mismatch for {name}, expected {expected} bytes but found {found} bytes")]
+    LengthMismatch {
+        name: &'static str,
+        expected: usize,
+        found: usize,
+    },
+    #[error("Extra data remaining in {name}, {remaining} bytes left unparsed")]
+    ExtraDataRemaining {
+        name: &'static str,
+        remaining: usize,
+    },
+    #[error("Unexpected value in {name}, expected {expected} but found {found}")]
+    UnexpectedValue {
+        name: &'static str,
+        expected: u64,
+        found: u64,
+    },
+    #[error("Inconsistent values in {name}, expected {expected} but found {found}")]
+    InconsistentValue {
+        name: &'static str,
+        expected: u64,
+        found: u64,
+    },
+    #[error("Unknown data found after Data Descriptor")]
+    UnknownDataAfterDescriptor,
+    #[error("Other error: {0}")]
+    Other(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
 }
 
 /// End of Central Directory record (EOCD)
@@ -628,24 +1080,22 @@ impl EndOfCentralDirectory {
     pub const MIN_SIZE: usize = 22;
 
     /// Parse End of Central Directory record from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, io::Error> {
+    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "EOCD data too short, expected at least {} bytes but got {}",
-                    Self::MIN_SIZE,
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthTooShort {
+                name: "EOCD",
+                expected: Self::MIN_SIZE,
+                found: data.len(),
+            });
         }
 
         let signature = parse_u32_le(&data[0..4]);
         if signature != 0x06054b50 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid EOCD signature, expected 0x06054b50 but got {signature:#010x}"),
-            ));
+            return Err(ZipParseError::InvalidSignature {
+                name: "EOCD",
+                expected: 0x06054b50,
+                found: signature,
+            });
         }
 
         let disk_number = parse_u16_le(&data[4..6]);
@@ -658,13 +1108,11 @@ impl EndOfCentralDirectory {
 
         let expected_len = 22 + comment_length;
         if data.len() < expected_len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "EOCD comment data incomplete, expected {expected_len} bytes but got {}",
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthTooShort {
+                name: "EOCD comment",
+                expected: expected_len,
+                found: data.len(),
+            });
         }
 
         let comment = data[22..22 + comment_length].to_vec();
@@ -701,26 +1149,22 @@ impl Zip64EndOfCentralDirectoryLocator {
     pub const SIZE: usize = 20;
 
     /// Parse Zip64 EOCD Locator from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, io::Error> {
+    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
         if data.len() != Self::SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Zip64 EOCD Locator data invalid length, expected {} bytes but got {}",
-                    Self::SIZE,
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthMismatch {
+                name: "Zip64 EOCD Locator",
+                expected: Self::SIZE,
+                found: data.len(),
+            });
         }
 
         let signature = parse_u32_le(&data[0..4]);
         if signature != 0x07064b50 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid Zip64 EOCD Locator signature, expected 0x07064b50 but got {signature:#010x}"
-                ),
-            ));
+            return Err(ZipParseError::InvalidSignature {
+                name: "Zip64 EOCD Locator",
+                expected: 0x07064b50,
+                found: signature,
+            });
         }
 
         let disk_with_eocd = parse_u32_le(&data[4..8]);
@@ -734,6 +1178,15 @@ impl Zip64EndOfCentralDirectoryLocator {
             total_disks,
         })
     }
+}
+
+/// End of Central Directory record for Zip64 (EOCD Zip64) with extensible data sector
+#[derive(Debug, Clone)]
+pub struct Zip64EndOfCentralDirectory {
+    /// Zip64 EOCD Header
+    pub header: Zip64EndOfCentralDirectoryHeader,
+    /// Extensible data sector offset and size
+    pub extensible_data: Option<(u64, u64)>,
 }
 
 /// End of Central Directory record for Zip64 (EOCD Zip64) without extensible data sector
@@ -766,26 +1219,22 @@ impl Zip64EndOfCentralDirectoryHeader {
     pub const SIZE: usize = 56;
 
     /// Parse Zip64 EOCD Header from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, io::Error> {
+    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
         if data.len() != Self::SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Zip64 EOCD Header data invalid length, expected {} bytes but got {}",
-                    Self::SIZE,
-                    data.len()
-                ),
-            ));
+            return Err(ZipParseError::LengthMismatch {
+                name: "Zip64 EOCD Header",
+                expected: Self::SIZE,
+                found: data.len(),
+            });
         }
 
         let signature = parse_u32_le(&data[0..4]);
         if signature != 0x06064b50 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid Zip64 EOCD Header signature, expected 0x06064b50 but got {signature:#010x}"
-                ),
-            ));
+            return Err(ZipParseError::InvalidSignature {
+                name: "Zip64 EOCD Header",
+                expected: 0x06064b50,
+                found: signature,
+            });
         }
 
         let size_of_record = parse_u64_le(&data[4..12]);
@@ -810,196 +1259,6 @@ impl Zip64EndOfCentralDirectoryHeader {
             central_directory_size,
             central_directory_offset,
         })
-    }
-}
-
-/// End of Central Directory record for Zip64 (EOCD Zip64) with extensible data sector
-#[derive(Debug, Clone)]
-pub struct Zip64EndOfCentralDirectory(
-    pub Zip64EndOfCentralDirectoryHeader,
-    /// Extensible data sector (not parsed, just raw data)
-    pub Vec<u8>,
-);
-
-/// Local File Header (LFH)
-#[derive(Debug, Clone)]
-pub struct LocalFileHeader {
-    /// Local file header signature = 0x04034b50
-    pub signature: u32,
-    /// Version needed to extract (minimum)
-    pub version_needed: u16,
-    /// General purpose bit flag
-    pub flags: GeneralPurposeBitFlag,
-    /// Compression method
-    pub compression_method: u16,
-    /// Last mod file time
-    pub last_mod_time: u16,
-    /// Last mod file date
-    pub last_mod_date: u16,
-    /// CRC-32
-    pub crc32: u32,
-    /// Compressed size
-    pub compressed_size: u32,
-    /// Uncompressed size
-    pub uncompressed_size: u32,
-    /// File name length
-    pub file_name_length: u16,
-    /// Extra field length
-    pub extra_field_length: u16,
-    /// File name
-    pub file_name: Vec<u8>,
-    /// Parsed extra fields
-    pub extra_fields: Vec<ExtraField>,
-    /// File data offset and size (not parsed, just references)
-    pub file_data_offset: u64,
-    pub file_data_size: u32,
-}
-
-impl LocalFileHeader {
-    /// Minimum size of LFH without variable-length fields
-    pub const MIN_SIZE: usize = 30;
-
-    /// Parse a Local File Header from binary data
-    pub fn parse(data: &[u8], offset: u64) -> Result<Self, io::Error> {
-        if data.len() < Self::MIN_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "LFH data too short, expected at least {} bytes but got {}",
-                    Self::MIN_SIZE,
-                    data.len()
-                ),
-            ));
-        }
-
-        let signature = parse_u32_le(&data[0..4]);
-        if signature != 0x04034b50 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid LFH signature, expected 0x04034b50 but got {signature:#010x}"),
-            ));
-        }
-
-        let version_needed = parse_u16_le(&data[4..6]);
-        let flags = GeneralPurposeBitFlag(parse_u16_le(&data[6..8]));
-        let compression_method = parse_u16_le(&data[8..10]);
-        let last_mod_time = parse_u16_le(&data[10..12]);
-        let last_mod_date = parse_u16_le(&data[12..14]);
-        let crc32 = parse_u32_le(&data[14..18]);
-        let compressed_size = parse_u32_le(&data[18..22]);
-        let uncompressed_size = parse_u32_le(&data[22..26]);
-        let file_name_length = parse_u16_le(&data[26..28]) as usize;
-        let extra_field_length = parse_u16_le(&data[28..30]) as usize;
-
-        if data.len() < 30 + file_name_length + extra_field_length {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "LFH data incomplete, expected {} bytes but got {}",
-                    30 + file_name_length + extra_field_length,
-                    data.len()
-                ),
-            ));
-        }
-
-        let file_name = data[30..30 + file_name_length].to_vec();
-        let extra_field_data =
-            data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
-
-        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
-
-        let lfh_size = 30 + file_name_length + extra_field_length;
-        let file_data_offset = offset + lfh_size as u64;
-
-        Ok(LocalFileHeader {
-            signature,
-            version_needed,
-            flags,
-            compression_method,
-            last_mod_time,
-            last_mod_date,
-            crc32,
-            compressed_size,
-            uncompressed_size,
-            file_name_length: file_name_length as u16,
-            extra_field_length: extra_field_length as u16,
-            file_name,
-            extra_fields,
-            file_data_offset,
-            file_data_size: compressed_size,
-        })
-    }
-}
-
-/// Extra field record within a LFH or CDH
-#[derive(Debug, Clone)]
-pub struct ExtraField {
-    /// Header ID (tag)
-    pub tag: u16,
-    /// Size of the data field
-    pub size: u16,
-    /// Field data
-    pub data: Vec<u8>,
-}
-
-impl ExtraField {
-    /// Parse extra fields from raw bytes
-    fn parse_all(data: &[u8]) -> Result<Vec<Self>, io::Error> {
-        let mut fields = Vec::new();
-        let mut offset = 0;
-
-        while offset + 4 <= data.len() {
-            let tag = parse_u16_le(&data[offset..offset + 2]);
-            let size = parse_u16_le(&data[offset + 2..offset + 4]);
-            offset += 4;
-
-            if offset + size as usize > data.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Extra field data incomplete for tag {tag:#06x}, expected size {size} but got {}",
-                        data.len() - offset
-                    ),
-                ));
-            }
-
-            let field_data = data[offset..offset + size as usize].to_vec();
-            offset += size as usize;
-
-            fields.push(ExtraField {
-                tag,
-                size,
-                data: field_data,
-            });
-        }
-
-        if offset != data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Extra field data has {} extra bytes at the end",
-                    data.len() - offset
-                ),
-            ));
-        }
-
-        Ok(fields)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct GeneralPurposeBitFlag(pub u16);
-
-impl GeneralPurposeBitFlag {
-    /// Check if the data descriptor flag is set
-    pub fn has_data_descriptor(&self) -> bool {
-        (self.0 & 0x0008) != 0
-    }
-
-    /// Check if the UTF-8 encoding flag (Language encoding flag, EFS) is set
-    pub fn is_utf8(&self) -> bool {
-        (self.0 & 0x0800) != 0
     }
 }
 
@@ -1069,7 +1328,7 @@ mod tests {
         lfh_data[26..28].copy_from_slice(&0u16.to_le_bytes());
         lfh_data[28..30].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = LocalFileHeader::parse(&lfh_data, 0);
+        let result = LocalFileHeader::parse(&lfh_data);
         assert!(result.is_ok());
         let lfh = result.unwrap();
         assert_eq!(lfh.signature, 0x04034b50);
