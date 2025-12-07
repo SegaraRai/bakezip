@@ -36,11 +36,11 @@ pub trait ZipFileParser: Sized {
             Zip64EndOfCentralDirectory,
             Option<Zip64EndOfCentralDirectoryLocator>,
         )>,
-    ) -> Result<Self, ZipParseError>;
+    ) -> Result<(), ZipParseError>;
 
-    fn on_entry(&mut self, entry: ZipFileEntry) -> Result<Self, ZipParseError>;
+    fn on_entry(&mut self, entry: ZipFileEntry) -> Result<(), ZipParseError>;
 
-    fn on_warning(&mut self, warning: ZipParseError) -> Result<Self, ZipParseError>;
+    fn on_warning(&mut self, warning: ZipParseError) -> Result<(), ZipParseError>;
 
     /// Parse a complete zip file
     async fn parse<R: ZipReader>(
@@ -73,7 +73,8 @@ pub trait ZipFileParser: Sized {
         // Parse EOCD
         let eocd_start_in_buffer = (eocd_offset - search_offset) as usize;
         let eocd_data_slice = &eocd_data[eocd_start_in_buffer..];
-        let eocd = EndOfCentralDirectory::parse(eocd_data_slice)?;
+        let eocd =
+            EndOfCentralDirectory::parse(eocd_data_slice, |warning| self.on_warning(warning))?;
 
         // Parse Zip64 EOCD if present
         let eocd_zip64 = if eocd.total_entries == 0xFFFF
@@ -199,7 +200,9 @@ pub trait ZipFileParser: Sized {
                 });
             }
 
-            let cdh = CentralDirectoryHeader::parse(&central_dir_data[cdh_offset..])?;
+            let cdh = CentralDirectoryHeader::parse(&central_dir_data[cdh_offset..], |warning| {
+                self.on_warning(warning)
+            })?;
             cdh_offset += cdh.len();
 
             if cdh.flags.is_central_directory_encrypted() {
@@ -230,7 +233,7 @@ pub trait ZipFileParser: Sized {
                     .read(cdh.local_header_offset as u64, lfh_full_size as u64)
                     .await?
             };
-            let lfh = LocalFileHeader::parse(&lfh_full_data)?;
+            let lfh = LocalFileHeader::parse(&lfh_full_data, |warning| self.on_warning(warning))?;
 
             let file_offset = cdh.local_header_offset as u64 + lfh.len() as u64;
             let file_size = cdh
@@ -442,7 +445,10 @@ impl CentralDirectoryHeader {
     }
 
     /// Parse a Central Directory Header from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
+    pub fn parse(
+        data: &[u8],
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+    ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
                 name: "CDH",
@@ -493,7 +499,7 @@ impl CentralDirectoryHeader {
         let offset = offset + extra_field_length;
         let file_comment = data[offset..offset + file_comment_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
+        let extra_fields = ExtraField::parse_all(&extra_field_data, |warning| on_warning(warning))?;
 
         let zip64 = extra_fields
             .iter()
@@ -578,7 +584,10 @@ impl LocalFileHeader {
     }
 
     /// Parse a Local File Header from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
+    pub fn parse(
+        data: &[u8],
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+    ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
                 name: "LFH",
@@ -620,7 +629,7 @@ impl LocalFileHeader {
         let extra_field_data =
             data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data)?;
+        let extra_fields = ExtraField::parse_all(&extra_field_data, |warning| on_warning(warning))?;
 
         let zip64 = extra_fields
             .iter()
@@ -690,7 +699,10 @@ pub struct ExtraField {
 
 impl ExtraField {
     /// Parse extra fields from raw bytes
-    fn parse_all(data: &[u8]) -> Result<Vec<Self>, ZipParseError> {
+    fn parse_all(
+        data: &[u8],
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+    ) -> Result<Vec<Self>, ZipParseError> {
         let mut fields = Vec::new();
         let mut offset = 0;
 
@@ -718,10 +730,10 @@ impl ExtraField {
         }
 
         if offset != data.len() {
-            return Err(ZipParseError::ExtraDataRemaining {
+            on_warning(ZipParseError::ExtraDataRemaining {
                 name: "ExtraField",
                 remaining: data.len() - offset,
-            });
+            })?;
         }
 
         Ok(fields)
@@ -1080,7 +1092,10 @@ impl EndOfCentralDirectory {
     pub const MIN_SIZE: usize = 22;
 
     /// Parse End of Central Directory record from binary data
-    pub fn parse(data: &[u8]) -> Result<Self, ZipParseError> {
+    pub fn parse(
+        data: &[u8],
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+    ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
                 name: "EOCD",
@@ -1116,6 +1131,13 @@ impl EndOfCentralDirectory {
         }
 
         let comment = data[22..22 + comment_length].to_vec();
+
+        if data.len() > expected_len {
+            on_warning(ZipParseError::ExtraDataRemaining {
+                name: "EOCD",
+                remaining: data.len() - expected_len,
+            })?;
+        }
 
         Ok(EndOfCentralDirectory {
             signature,
@@ -1328,7 +1350,7 @@ mod tests {
         lfh_data[26..28].copy_from_slice(&0u16.to_le_bytes());
         lfh_data[28..30].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = LocalFileHeader::parse(&lfh_data);
+        let result = LocalFileHeader::parse(&lfh_data, |e| Err(e));
         assert!(result.is_ok());
         let lfh = result.unwrap();
         assert_eq!(lfh.signature, 0x04034b50);
@@ -1344,7 +1366,7 @@ mod tests {
         cdh_data[30..32].copy_from_slice(&0u16.to_le_bytes());
         cdh_data[32..34].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = CentralDirectoryHeader::parse(&cdh_data);
+        let result = CentralDirectoryHeader::parse(&cdh_data, |e| Err(e));
         assert!(result.is_ok());
         let cdh = result.unwrap();
         assert_eq!(cdh.signature, 0x02014b50);
@@ -1358,7 +1380,7 @@ mod tests {
         // Set comment length to 0
         eocd_data[20..22].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = EndOfCentralDirectory::parse(&eocd_data);
+        let result = EndOfCentralDirectory::parse(&eocd_data, |e| Err(e));
         assert!(result.is_ok());
         let eocd = result.unwrap();
         assert_eq!(eocd.signature, 0x06054b50);
@@ -1376,7 +1398,7 @@ mod tests {
         data[10..12].copy_from_slice(&2u16.to_le_bytes());
         data[12..14].copy_from_slice(b"ab");
 
-        let result = ExtraField::parse_all(&data);
+        let result = ExtraField::parse_all(&data, |e| Err(e));
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 2);
@@ -1391,7 +1413,7 @@ mod tests {
     #[test]
     fn test_parse_extra_fields_empty() {
         let data: Vec<u8> = vec![];
-        let result = ExtraField::parse_all(&data);
+        let result = ExtraField::parse_all(&data, |e| Err(e));
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 0);
