@@ -1,45 +1,266 @@
 use std::collections::BTreeMap;
 
-use super::parse::ZipFile;
 use chardetng::EncodingDetector;
-use encoding_rs::{SHIFT_JIS, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{Encoding, UTF_8};
+
+use super::parse::ZipFile;
+
+pub struct InspectConfig {
+    /// Whether to ignore UTF-8 extra fields
+    ///
+    /// Should be true only when the archive is known to be created by a broken implementation
+    pub ignore_extra_fields: bool,
+    /// Whether to ignore CRC32 mismatches in UTF-8 extra fields
+    ///
+    /// Should be true only when the archive is known to be created by a broken implementation
+    pub ignore_crc32_mismatch: bool,
+    /// Whether to prefer Local File Header fields over Central Directory Header fields
+    ///
+    /// Should be true only when the archive is known to be created by a broken implementation
+    pub prefer_lfh: bool,
+    /// Additional encoding to try
+    pub additional_encoding: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InspectedArchive {
+    /// The overall detected encoding for the archive
+    pub overall_encoding: Option<String>,
+    /// The decoded entries
+    pub entries: Vec<InspectedEntry>,
+}
 
 /// Decoded filename information
 #[derive(Debug, Clone)]
-pub struct DecodedFilename {
+pub struct InspectedEntry {
+    /// The decoded filename field
+    pub filename: InspectedFilenameField,
+}
+
+#[derive(Debug, Clone)]
+pub struct InspectedFilenameField {
+    /// The kind of filename field
+    pub kind: InspectedFilenameFieldKind,
+    /// Whether the UTF-8 flag is set for this field
+    pub utf8_flag: bool,
     /// The original bytes before decoding
     pub original_bytes: Vec<u8>,
-    /// The original bytes before decoding
-    pub original_bytes_unicode: Vec<u8>,
-    /// The decoded filenames
-    pub decoded_map: BTreeMap<&'static str, (String, bool)>,
+    /// The detected encoding used for decoding
+    pub detected_encoding: Option<String>,
+    /// The decoded filename, if decoding was successful
+    pub decoded_map: BTreeMap<String, DecodedString>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedString {
+    /// The decoded string
+    pub string: String,
+    /// Whether there were decoding errors
+    pub has_errors: bool,
+    /// The encoding specified for decoding
+    pub encoding_specified: String,
+    /// The encoding used for decoding
+    pub encoding_used: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectedFilenameFieldKind {
+    /// Central Directory Header File Name Field
+    CdhFileName,
+    /// Central Directory Header "up" Extra Field (UTF-8)
+    CdhExtraFieldUtf8,
+    /// Local File Header File Name Field
+    LfhFileName,
+    /// Local File Header "up" Extra Field (UTF-8)
+    LfhExtraField,
+}
+
+impl InspectedArchive {
+    pub fn inspect(zip_file: &ZipFile, config: &InspectConfig) -> Self {
+        fn get_utf8_extra_field<'a>(
+            extra_fields: &'a [super::parse::ExtraField],
+            original_filename_bytes: &'a [u8],
+            ignore_crc32_mismatch: bool,
+        ) -> Option<&'a [u8]> {
+            extra_fields.iter().find(|f| f.tag == 0x7075).and_then(|f| {
+                if f.data.len() < 5 {
+                    // UTF-8 extra field too short
+                    return None;
+                }
+
+                if f.data[0] != 1 {
+                    // Unsupported version
+                    return None;
+                }
+
+                if !ignore_crc32_mismatch {
+                    let crc32_stored =
+                        u32::from_le_bytes([f.data[1], f.data[2], f.data[3], f.data[4]]);
+                    let crc32_computed = crc_fast::checksum(
+                        crc_fast::CrcAlgorithm::Crc32IsoHdlc,
+                        original_filename_bytes,
+                    ) as u32;
+                    if crc32_stored != crc32_computed {
+                        // CRC32 mismatch, meaning the filename field may be updated by an archive tool that doesn't update the extra field
+                        return None;
+                    }
+                }
+
+                Some(&f.data[5..])
+            })
+        }
+
+        struct PreDetectInspectedFileEntry<'a> {
+            kind: InspectedFilenameFieldKind,
+            utf8_flag: bool,
+            original_bytes: &'a [u8],
+        }
+
+        let predetected_entries = zip_file
+            .entries
+            .iter()
+            .map(|entry| {
+                if config.prefer_lfh {
+                    if config.ignore_extra_fields {
+                        None
+                    } else {
+                        get_utf8_extra_field(
+                            &entry.lfh.extra_fields,
+                            &entry.lfh.file_name,
+                            config.ignore_crc32_mismatch,
+                        )
+                    }
+                    .map_or(
+                        PreDetectInspectedFileEntry {
+                            kind: InspectedFilenameFieldKind::LfhFileName,
+                            utf8_flag: entry.lfh.flags.is_utf8(),
+                            original_bytes: &entry.lfh.file_name,
+                        },
+                        |data| PreDetectInspectedFileEntry {
+                            kind: InspectedFilenameFieldKind::LfhExtraField,
+                            utf8_flag: true,
+                            original_bytes: data,
+                        },
+                    )
+                } else {
+                    if config.ignore_extra_fields {
+                        None
+                    } else {
+                        get_utf8_extra_field(
+                            &entry.cdh.extra_fields,
+                            &entry.cdh.file_name,
+                            config.ignore_crc32_mismatch,
+                        )
+                    }
+                    .map_or(
+                        PreDetectInspectedFileEntry {
+                            kind: InspectedFilenameFieldKind::CdhFileName,
+                            utf8_flag: entry.cdh.flags.is_utf8(),
+                            original_bytes: &entry.cdh.file_name,
+                        },
+                        |data| PreDetectInspectedFileEntry {
+                            kind: InspectedFilenameFieldKind::CdhExtraFieldUtf8,
+                            utf8_flag: true,
+                            original_bytes: data,
+                        },
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let concatenated_filename_bytes = predetected_entries
+            .iter()
+            .flat_map(|e| e.original_bytes)
+            .copied()
+            .collect::<Vec<_>>();
+        let overall_encoding = auto_detect_and_decode(&concatenated_filename_bytes).map(|(_, e)| e);
+
+        let additional_encoding = config
+            .additional_encoding
+            .as_ref()
+            .and_then(|enc_name| Encoding::for_label(enc_name.as_bytes()))
+            .map(EncodingOrAscii::Encoding);
+
+        let entries = predetected_entries
+            .into_iter()
+            .map(|predetected| {
+                let detected_encoding = auto_detect_and_decode(predetected.original_bytes)
+                    .map(|(_, encoding)| encoding);
+
+                let all_encodings = [&detected_encoding, &overall_encoding, &additional_encoding]
+                    .into_iter()
+                    .copied()
+                    .flatten();
+
+                let mut decoded_map = BTreeMap::new();
+                for encoding in all_encodings {
+                    if decoded_map.contains_key(encoding.name()) {
+                        continue;
+                    }
+
+                    let (decoded, has_errors, encoding_used) =
+                        decode_with_encoding(predetected.original_bytes, encoding.encoding(), true)
+                            .unwrap();
+
+                    decoded_map.insert(
+                        encoding.name().to_string(),
+                        DecodedString {
+                            string: decoded,
+                            has_errors,
+                            encoding_specified: encoding.name().to_string(),
+                            encoding_used: encoding_used.name().to_string(),
+                        },
+                    );
+                }
+
+                InspectedFilenameField {
+                    kind: predetected.kind,
+                    utf8_flag: predetected.utf8_flag,
+                    original_bytes: predetected.original_bytes.to_vec(),
+                    detected_encoding: detected_encoding.map(|e| e.name().to_string()),
+                    decoded_map,
+                }
+            })
+            .map(|filename_field| InspectedEntry {
+                filename: filename_field,
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            overall_encoding: overall_encoding.map(|e| e.name().to_string()),
+            entries,
+        }
+    }
 }
 
 /// Decode bytes using a specific encoding from encoding_rs
 fn decode_with_encoding(
     data: &[u8],
-    encoding: &'static encoding_rs::Encoding,
+    encoding: &'static Encoding,
     force: bool,
-) -> Option<(String, &'static str)> {
-    let (result, encoding_used, had_errors) = encoding.decode(data);
-    if force || !had_errors {
-        Some((result.into_owned(), encoding_used.name()))
+) -> Option<(String, bool, &'static Encoding)> {
+    let (result, encoding_used, has_errors) = encoding.decode(data);
+    if force || !has_errors {
+        Some((result.into_owned(), has_errors, encoding_used))
     } else {
         None
     }
 }
 
 /// Auto-detect encoding using chardetng and encoding_rs
-fn auto_detect_and_decode(data: &[u8]) -> Option<(String, &'static str)> {
+///
+/// Returns decoded string and detected encoding or None if decoding failed
+fn auto_detect_and_decode(data: &[u8]) -> Option<(String, EncodingOrAscii)> {
     // Try UTF-8 (most common for modern zips)
-    if let Some(decoded) = decode_with_encoding(data, UTF_8, false)
-        && !decoded.0.contains('\0')
+    if let Some((decoded, _, _)) = decode_with_encoding(data, UTF_8, false)
+        && !decoded.contains('\0')
     {
-        if data.iter().all(|&b| b.is_ascii()) {
-            return Some((decoded.0, "ASCII"));
+        let encoding = if data.iter().all(|&b| b.is_ascii()) {
+            EncodingOrAscii::Ascii
         } else {
-            return Some(decoded);
-        }
+            EncodingOrAscii::Encoding(UTF_8)
+        };
+        return Some((decoded, encoding));
     }
 
     // Use chardetng for general encoding detection
@@ -48,163 +269,30 @@ fn auto_detect_and_decode(data: &[u8]) -> Option<(String, &'static str)> {
 
     let detected_encoding = detector.guess(None, true);
     if let Some(decoded) = decode_with_encoding(data, detected_encoding, true) {
-        return Some(decoded);
+        return Some((decoded.0, EncodingOrAscii::Encoding(detected_encoding)));
     }
 
     None
 }
 
-/// Decode a single filename using the given configuration
-pub fn decode_filename(data: &[u8], config: &DecodeConfig) -> DecodedFilename {
-    let original_bytes = data.to_vec();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodingOrAscii {
+    Ascii,
+    Encoding(&'static Encoding),
+}
 
-    let result = match config.encoding {
-        None => auto_detect_and_decode(data),
-        Some(enccoding) => {
-            let encoding = match enccoding {
-                CharacterEncoding::Utf8 => UTF_8,
-                CharacterEncoding::Utf16Le => UTF_16LE,
-                CharacterEncoding::Utf16Be => UTF_16BE,
-                CharacterEncoding::Cp932 => SHIFT_JIS,
-            };
-            decode_with_encoding(data, encoding, true)
+impl EncodingOrAscii {
+    pub fn name(&self) -> &'static str {
+        match self {
+            EncodingOrAscii::Ascii => "ASCII",
+            EncodingOrAscii::Encoding(enc) => enc.name(),
         }
-    };
-
-    let (filename, encoding_used) = match result {
-        Some((s, enc)) => (Some(s), Some(enc)),
-        None => (None, None),
-    };
-
-    DecodedFilename {
-        filename,
-        original_bytes,
-        encoding_used,
-    }
-}
-
-/// List all filenames in a ZipFile with the given decode configuration
-pub fn list_filenames(zip_file: &ZipFile, config: &DecodeConfig) -> Vec<DecodedFilename> {
-    let filenames = zip_file
-        .entries
-        .iter()
-        .map(|(cdh, _lfh)| {
-            // Determine which field to use for the filename
-            let filename_bytes = if config.prefer_extra_field {
-                // Check for UTF-8 extra field (tag 0x7075)
-                if let Some(utf8_field) = cdh.extra_fields.iter().find(|f| f.tag == 0x7075) {
-                    // UTF-8 extra field format: version (1) + crc32 (4) + utf8_name
-                    if utf8_field.data.len() > 5 {
-                        &utf8_field.data[5..]
-                    } else {
-                        &cdh.file_name
-                    }
-                } else {
-                    &cdh.file_name
-                }
-            } else {
-                &cdh.file_name
-            };
-            filename_bytes
-        })
-        .collect::<Vec<_>>();
-
-    let concat_filename = filenames.iter().flat_map(|s| *s).collect::<Vec<_>>();
-    let decoded = decode_filename(&concat_filename, config);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_decode_config_default() {
-        let config = DecodeConfig::default();
-        assert_eq!(config.encoding, None);
-        assert!(!config.prefer_extra_field);
     }
 
-    #[test]
-    fn test_decode_filename_utf8() {
-        let config = DecodeConfig {
-            encoding: Some(CharacterEncoding::Utf8),
-            prefer_extra_field: false,
-        };
-        let bytes = "test.txt".as_bytes();
-        let result = decode_filename(bytes, &config);
-        assert_eq!(result.filename, Some("test.txt".into()));
-        assert_eq!(result.encoding_used, Some("UTF-8"));
-    }
-
-    #[test]
-    fn test_decode_filename_utf8_unicode() {
-        let config = DecodeConfig {
-            encoding: Some(CharacterEncoding::Utf8),
-            prefer_extra_field: false,
-        };
-        let bytes = "ファイル.txt".as_bytes();
-        let result = decode_filename(bytes, &config);
-        assert_eq!(result.filename, Some("ファイル.txt".into()));
-        assert_eq!(result.encoding_used, Some("UTF-8"));
-    }
-
-    #[test]
-    fn test_auto_detect_utf8() {
-        let bytes = "hello world.zip".as_bytes();
-        let config = DecodeConfig {
-            encoding: None,
-            prefer_extra_field: false,
-        };
-        let result = decode_filename(bytes, &config);
-        assert_eq!(result.filename, Some("hello world.zip".into()));
-        assert_eq!(result.encoding_used, Some("UTF-8"));
-    }
-
-    #[test]
-    fn test_decode_utf16le_explicit() {
-        // "hello" in UTF-16LE
-        let bytes = vec![0x68, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00];
-        let config = DecodeConfig {
-            encoding: Some(CharacterEncoding::Utf16Le),
-            prefer_extra_field: false,
-        };
-        let result = decode_filename(&bytes, &config);
-        assert_eq!(result.filename, Some("hello".into()));
-        assert_eq!(result.encoding_used, Some("UTF-16LE"));
-    }
-
-    #[test]
-    fn test_decode_utf16be_explicit() {
-        // "hi" in UTF-16BE: h=0x00 0x68, i=0x00 0x69
-        let bytes = vec![0x00, 0x68, 0x00, 0x69];
-        let config = DecodeConfig {
-            encoding: Some(CharacterEncoding::Utf16Be),
-            prefer_extra_field: false,
-        };
-        let result = decode_filename(&bytes, &config);
-        assert_eq!(result.filename, Some("hi".into()));
-        assert_eq!(result.encoding_used, Some("UTF-16BE"));
-    }
-
-    #[test]
-    fn test_decode_cp932_explicit() {
-        // "テスト" (test in Japanese) - needs CP932/Shift JIS encoding
-        let bytes = vec![0x83, 0x65, 0x83, 0x58, 0x83, 0x67];
-        let config = DecodeConfig {
-            encoding: Some(CharacterEncoding::Cp932),
-            prefer_extra_field: false,
-        };
-        let result = decode_filename(&bytes, &config);
-        // Should decode to the Japanese characters or a reasonable fallback
-        assert_eq!(result.filename, Some("テスト".into()));
-        assert_eq!(result.encoding_used, Some("Shift_JIS"));
-    }
-
-    #[test]
-    fn test_decode_filename_preserves_original_bytes() {
-        let bytes = vec![0xE6, 0x97, 0xA5];
-        let config = DecodeConfig::default();
-        let result = decode_filename(&bytes, &config);
-        assert_eq!(result.original_bytes, bytes);
+    pub fn encoding(&self) -> &'static Encoding {
+        match self {
+            EncodingOrAscii::Ascii => UTF_8,
+            EncodingOrAscii::Encoding(enc) => enc,
+        }
     }
 }

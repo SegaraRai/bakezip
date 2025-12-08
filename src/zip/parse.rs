@@ -13,6 +13,83 @@ pub trait ZipReader {
     ) -> impl std::future::Future<Output = Result<Vec<u8>, io::Error>>;
 }
 
+#[derive(Debug, Clone)]
+pub struct ZipFile {
+    /// The overall size of the zip file
+    pub size: u64,
+    /// End of Central Directory
+    pub eocd: EndOfCentralDirectory,
+    /// Optional Zip64 End of Central Directory
+    pub zip64_eocd: Option<(
+        Zip64EndOfCentralDirectory,
+        Option<Zip64EndOfCentralDirectoryLocator>,
+    )>,
+    /// Entries in the zip file
+    pub entries: Vec<ZipFileEntry>,
+}
+
+impl ZipFile {
+    /// Parse a zip file from a ZipReader
+    pub async fn parse<Reader: ZipReader>(
+        reader: &mut Reader,
+        mut on_warning: impl FnMut(Option<u64>, ZipParseError) -> Result<(), ZipParseError>,
+    ) -> Result<Self, ZipParseError> {
+        let size = reader.get_size().await?;
+
+        let (eocd, zip64_eocd, entries) = parse_zip(
+            reader,
+            DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE,
+            |eocd, zip64_eocd| Ok((eocd, zip64_eocd, Vec::new())),
+            |(_, _, entries), entry| {
+                entries.push(entry);
+                Ok(())
+            },
+            |_, idx, warning| on_warning(idx, warning),
+        )
+        .await?;
+
+        Ok(ZipFile {
+            size,
+            eocd,
+            zip64_eocd,
+            entries,
+        })
+    }
+
+    /// Parse a zip file from a ZipReader
+    pub async fn parse_with_warnings<Reader: ZipReader>(
+        reader: &mut Reader,
+    ) -> Result<(Self, Vec<(Option<u64>, ZipParseError)>), ZipParseError> {
+        let size = reader.get_size().await?;
+
+        let mut warnings = Vec::new();
+        let (eocd, zip64_eocd, entries) = parse_zip(
+            reader,
+            DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE,
+            |eocd, zip64_eocd| Ok((eocd, zip64_eocd, Vec::new())),
+            |(_, _, entries), entry| {
+                entries.push(entry);
+                Ok(())
+            },
+            |_, idx, warning| {
+                warnings.push((idx, warning));
+                Ok(())
+            },
+        )
+        .await?;
+
+        Ok((
+            ZipFile {
+                size,
+                eocd,
+                zip64_eocd,
+                entries,
+            },
+            warnings,
+        ))
+    }
+}
+
 /// Zip file entry combining CDH, LFH, and optional Data Descriptor
 #[derive(Debug, Clone)]
 pub struct ZipFileEntry {
