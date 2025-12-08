@@ -477,18 +477,18 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
         } else {
             Some(lfh.crc32)
         };
-        if let Some(value) = lfh_crc32 {
-            if value != cdh.crc32 {
-                on_warning(
-                    Some(&mut state),
-                    Some(idx),
-                    ZipParseError::InconsistentValue {
-                        name: "CRC32",
-                        expected: cdh.crc32 as u64,
-                        found: value as u64,
-                    },
-                )?;
-            }
+        if let Some(value) = lfh_crc32
+            && value != cdh.crc32
+        {
+            on_warning(
+                Some(&mut state),
+                Some(idx),
+                ZipParseError::InconsistentValue {
+                    name: "CRC32",
+                    expected: cdh.crc32 as u64,
+                    found: value as u64,
+                },
+            )?;
         }
 
         // Invoke callback for the entry
@@ -584,10 +584,15 @@ impl CentralDirectoryHeader {
             + self.file_comment_length as usize
     }
 
+    /// Returns false
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Parse a Central Directory Header from binary data
     pub fn parse(
         data: &[u8],
-        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+        on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
@@ -639,7 +644,7 @@ impl CentralDirectoryHeader {
         let offset = offset + extra_field_length;
         let file_comment = data[offset..offset + file_comment_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data, |warning| on_warning(warning))?;
+        let extra_fields = ExtraField::parse_all(&extra_field_data, on_warning)?;
 
         let zip64 = extra_fields
             .iter()
@@ -723,10 +728,15 @@ impl LocalFileHeader {
         Self::MIN_SIZE + self.file_name_length as usize + self.extra_field_length as usize
     }
 
+    /// Returns false
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Parse a Local File Header from binary data
     pub fn parse(
         data: &[u8],
-        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+        on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
@@ -769,7 +779,7 @@ impl LocalFileHeader {
         let extra_field_data =
             data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data, |warning| on_warning(warning))?;
+        let extra_fields = ExtraField::parse_all(&extra_field_data, on_warning)?;
 
         let zip64 = extra_fields
             .iter()
@@ -1005,27 +1015,27 @@ impl DataDescriptor {
 
     /// Check if the descriptor is a Zip64 descriptor
     pub fn is_zip64(&self) -> bool {
-        match self {
-            &DataDescriptor::Standard { .. } => false,
-            &DataDescriptor::Zip64 { .. } => true,
+        match *self {
+            DataDescriptor::Standard { .. } => false,
+            DataDescriptor::Zip64 { .. } => true,
         }
     }
 
     /// Get the CRC32 value
     pub fn get_crc32(&self) -> u32 {
-        match self {
-            &DataDescriptor::Standard { crc32, .. } => crc32,
-            &DataDescriptor::Zip64 { crc32, .. } => crc32,
+        match *self {
+            DataDescriptor::Standard { crc32, .. } => crc32,
+            DataDescriptor::Zip64 { crc32, .. } => crc32,
         }
     }
 
     /// Get the compressed size
     pub fn get_compressed_size(&self) -> u64 {
-        match self {
-            &DataDescriptor::Standard {
+        match *self {
+            DataDescriptor::Standard {
                 compressed_size, ..
             } => compressed_size as u64,
-            &DataDescriptor::Zip64 {
+            DataDescriptor::Zip64 {
                 compressed_size, ..
             } => compressed_size,
         }
@@ -1033,11 +1043,11 @@ impl DataDescriptor {
 
     /// Get the uncompressed size
     pub fn get_uncompressed_size(&self) -> u64 {
-        match self {
-            &DataDescriptor::Standard {
+        match *self {
+            DataDescriptor::Standard {
                 uncompressed_size, ..
             } => uncompressed_size as u64,
-            &DataDescriptor::Zip64 {
+            DataDescriptor::Zip64 {
                 uncompressed_size, ..
             } => uncompressed_size,
         }
@@ -1496,7 +1506,7 @@ mod tests {
         lfh_data[26..28].copy_from_slice(&0u16.to_le_bytes());
         lfh_data[28..30].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = LocalFileHeader::parse(&lfh_data, |e| Err(e));
+        let result = LocalFileHeader::parse(&lfh_data, Err);
         assert!(result.is_ok());
         let lfh = result.unwrap();
         assert_eq!(lfh.signature, 0x04034b50);
@@ -1512,7 +1522,7 @@ mod tests {
         cdh_data[30..32].copy_from_slice(&0u16.to_le_bytes());
         cdh_data[32..34].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = CentralDirectoryHeader::parse(&cdh_data, |e| Err(e));
+        let result = CentralDirectoryHeader::parse(&cdh_data, Err);
         assert!(result.is_ok());
         let cdh = result.unwrap();
         assert_eq!(cdh.signature, 0x02014b50);
@@ -1526,7 +1536,7 @@ mod tests {
         // Set comment length to 0
         eocd_data[20..22].copy_from_slice(&0u16.to_le_bytes());
 
-        let result = EndOfCentralDirectory::parse(&eocd_data, |e| Err(e));
+        let result = EndOfCentralDirectory::parse(&eocd_data, Err);
         assert!(result.is_ok());
         let eocd = result.unwrap();
         assert_eq!(eocd.signature, 0x06054b50);
@@ -1544,7 +1554,7 @@ mod tests {
         data[10..12].copy_from_slice(&2u16.to_le_bytes());
         data[12..14].copy_from_slice(b"ab");
 
-        let result = ExtraField::parse_all(&data, |e| Err(e));
+        let result = ExtraField::parse_all(&data, Err);
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 2);
@@ -1559,7 +1569,7 @@ mod tests {
     #[test]
     fn test_parse_extra_fields_empty() {
         let data: Vec<u8> = vec![];
-        let result = ExtraField::parse_all(&data, |e| Err(e));
+        let result = ExtraField::parse_all(&data, Err);
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 0);
