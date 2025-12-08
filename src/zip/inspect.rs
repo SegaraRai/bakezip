@@ -2,9 +2,17 @@ use std::collections::BTreeMap;
 
 use chardetng::EncodingDetector;
 use encoding_rs::{Encoding, UTF_8};
+use serde::{Deserialize, Serialize};
 
 use super::parse::ZipFile;
 
+/// Configuration for inspecting ZIP archives
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct InspectConfig {
     /// Whether to ignore UTF-8 extra fields
     ///
@@ -22,7 +30,13 @@ pub struct InspectConfig {
     pub additional_encoding: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+/// Inspected ZIP archive
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct InspectedArchive {
     /// The overall detected encoding for the archive
     pub overall_encoding: Option<String>,
@@ -30,14 +44,25 @@ pub struct InspectedArchive {
     pub entries: Vec<InspectedEntry>,
 }
 
-/// Decoded filename information
-#[derive(Debug, Clone)]
+/// Inspected ZIP file entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct InspectedEntry {
     /// The decoded filename field
     pub filename: InspectedFilenameField,
 }
 
-#[derive(Debug, Clone)]
+/// Inspected filename field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct InspectedFilenameField {
     /// The kind of filename field
     pub kind: InspectedFilenameFieldKind,
@@ -51,7 +76,13 @@ pub struct InspectedFilenameField {
     pub decoded_map: BTreeMap<String, DecodedString>,
 }
 
-#[derive(Debug, Clone)]
+/// Decoded string with metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub struct DecodedString {
     /// The decoded string
     pub string: String,
@@ -63,7 +94,13 @@ pub struct DecodedString {
     pub encoding_used: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Kind of inspected filename field
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
 pub enum InspectedFilenameFieldKind {
     /// Central Directory Header File Name Field
     CdhFileName,
@@ -275,21 +312,22 @@ fn auto_detect_and_decode(data: &[u8]) -> Option<(String, EncodingOrAscii)> {
     None
 }
 
+/// Encoding or ASCII marker
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EncodingOrAscii {
+enum EncodingOrAscii {
     Ascii,
     Encoding(&'static Encoding),
 }
 
 impl EncodingOrAscii {
-    pub fn name(&self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             EncodingOrAscii::Ascii => "ASCII",
             EncodingOrAscii::Encoding(enc) => enc.name(),
         }
     }
 
-    pub fn encoding(&self) -> &'static Encoding {
+    fn encoding(&self) -> &'static Encoding {
         match self {
             EncodingOrAscii::Ascii => UTF_8,
             EncodingOrAscii::Encoding(enc) => enc,
