@@ -8,7 +8,10 @@ use super::parse::ZipFile;
 
 /// Configuration for inspecting ZIP archives
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
@@ -32,7 +35,10 @@ pub struct InspectConfig {
 
 /// Inspected ZIP archive
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
@@ -46,7 +52,10 @@ pub struct InspectedArchive {
 
 /// Inspected ZIP file entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
@@ -58,7 +67,10 @@ pub struct InspectedEntry {
 
 /// Inspected filename field
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
@@ -78,7 +90,10 @@ pub struct InspectedFilenameField {
 
 /// Decoded string with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
@@ -96,7 +111,10 @@ pub struct DecodedString {
 
 /// Kind of inspected filename field
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), derive(Tsify))]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
 #[cfg_attr(
     all(target_arch = "wasm32", target_os = "unknown"),
     tsify(into_wasm_abi, from_wasm_abi)
