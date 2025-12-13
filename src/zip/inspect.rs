@@ -44,10 +44,10 @@ pub struct InspectConfig {
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 pub struct InspectedArchive {
-    /// The overall detected encoding for the archive
-    pub overall_encoding: Option<String>,
     /// The decoded entries
     pub entries: Vec<InspectedEntry>,
+    /// The overall detected encoding for the archive
+    pub overall_encoding: Option<String>,
 }
 
 /// Inspected ZIP file entry
@@ -63,6 +63,10 @@ pub struct InspectedArchive {
 pub struct InspectedEntry {
     /// The decoded filename field
     pub filename: InspectedFilenameField,
+    /// The uncompressed size of the entry
+    pub uncompressed_size: u64,
+    /// The compressed size of the entry
+    pub compressed_size: u64,
 }
 
 /// Inspected filename field
@@ -132,39 +136,6 @@ pub enum InspectedFilenameFieldKind {
 
 impl InspectedArchive {
     pub fn inspect(zip_file: &ZipFile, config: &InspectConfig) -> Self {
-        fn get_utf8_extra_field<'a>(
-            extra_fields: &'a [super::parse::ExtraField],
-            original_filename_bytes: &'a [u8],
-            ignore_crc32_mismatch: bool,
-        ) -> Option<&'a [u8]> {
-            extra_fields.iter().find(|f| f.tag == 0x7075).and_then(|f| {
-                if f.data.len() < 5 {
-                    // UTF-8 extra field too short
-                    return None;
-                }
-
-                if f.data[0] != 1 {
-                    // Unsupported version
-                    return None;
-                }
-
-                if !ignore_crc32_mismatch {
-                    let crc32_stored =
-                        u32::from_le_bytes([f.data[1], f.data[2], f.data[3], f.data[4]]);
-                    let crc32_computed = crc_fast::checksum(
-                        crc_fast::CrcAlgorithm::Crc32IsoHdlc,
-                        original_filename_bytes,
-                    ) as u32;
-                    if crc32_stored != crc32_computed {
-                        // CRC32 mismatch, meaning the filename field may be updated by an archive tool that doesn't update the extra field
-                        return None;
-                    }
-                }
-
-                Some(&f.data[5..])
-            })
-        }
-
         struct PreDetectInspectedFileEntry<'a> {
             kind: InspectedFilenameFieldKind,
             utf8_flag: bool,
@@ -176,49 +147,57 @@ impl InspectedArchive {
             .iter()
             .map(|entry| {
                 if config.prefer_lfh {
-                    if config.ignore_extra_fields {
-                        None
-                    } else {
-                        get_utf8_extra_field(
-                            &entry.lfh.extra_fields,
-                            &entry.lfh.file_name,
-                            config.ignore_crc32_mismatch,
+                    entry
+                        .lfh
+                        .unicode_path
+                        .as_ref()
+                        .and_then(|up| {
+                            if config.ignore_extra_fields
+                                || (!config.ignore_crc32_mismatch && up.crc32_matched)
+                            {
+                                None
+                            } else {
+                                Some(&up.data)
+                            }
+                        })
+                        .map_or(
+                            PreDetectInspectedFileEntry {
+                                kind: InspectedFilenameFieldKind::LfhFileName,
+                                utf8_flag: entry.lfh.flags.is_utf8(),
+                                original_bytes: &entry.lfh.file_name,
+                            },
+                            |data| PreDetectInspectedFileEntry {
+                                kind: InspectedFilenameFieldKind::LfhExtraField,
+                                utf8_flag: true,
+                                original_bytes: data,
+                            },
                         )
-                    }
-                    .map_or(
-                        PreDetectInspectedFileEntry {
-                            kind: InspectedFilenameFieldKind::LfhFileName,
-                            utf8_flag: entry.lfh.flags.is_utf8(),
-                            original_bytes: &entry.lfh.file_name,
-                        },
-                        |data| PreDetectInspectedFileEntry {
-                            kind: InspectedFilenameFieldKind::LfhExtraField,
-                            utf8_flag: true,
-                            original_bytes: data,
-                        },
-                    )
                 } else {
-                    if config.ignore_extra_fields {
-                        None
-                    } else {
-                        get_utf8_extra_field(
-                            &entry.cdh.extra_fields,
-                            &entry.cdh.file_name,
-                            config.ignore_crc32_mismatch,
+                    entry
+                        .cdh
+                        .unicode_path
+                        .as_ref()
+                        .and_then(|up| {
+                            if config.ignore_extra_fields
+                                || (!config.ignore_crc32_mismatch && up.crc32_matched)
+                            {
+                                None
+                            } else {
+                                Some(&up.data)
+                            }
+                        })
+                        .map_or(
+                            PreDetectInspectedFileEntry {
+                                kind: InspectedFilenameFieldKind::CdhFileName,
+                                utf8_flag: entry.cdh.flags.is_utf8(),
+                                original_bytes: &entry.cdh.file_name,
+                            },
+                            |data| PreDetectInspectedFileEntry {
+                                kind: InspectedFilenameFieldKind::CdhExtraFieldUtf8,
+                                utf8_flag: true,
+                                original_bytes: data,
+                            },
                         )
-                    }
-                    .map_or(
-                        PreDetectInspectedFileEntry {
-                            kind: InspectedFilenameFieldKind::CdhFileName,
-                            utf8_flag: entry.cdh.flags.is_utf8(),
-                            original_bytes: &entry.cdh.file_name,
-                        },
-                        |data| PreDetectInspectedFileEntry {
-                            kind: InspectedFilenameFieldKind::CdhExtraFieldUtf8,
-                            utf8_flag: true,
-                            original_bytes: data,
-                        },
-                    )
                 }
             })
             .collect::<Vec<_>>();
@@ -228,7 +207,7 @@ impl InspectedArchive {
             .flat_map(|e| e.original_bytes)
             .copied()
             .collect::<Vec<_>>();
-        let overall_encoding = auto_detect_and_decode(&concatenated_filename_bytes).map(|(_, e)| e);
+        let overall_encoding = detect_encoding(&concatenated_filename_bytes);
 
         let additional_encoding = config
             .additional_encoding
@@ -239,8 +218,7 @@ impl InspectedArchive {
         let entries = predetected_entries
             .into_iter()
             .map(|predetected| {
-                let detected_encoding = auto_detect_and_decode(predetected.original_bytes)
-                    .map(|(_, encoding)| encoding);
+                let detected_encoding = detect_encoding(predetected.original_bytes);
 
                 let all_encodings = [&detected_encoding, &overall_encoding, &additional_encoding]
                     .into_iter()
@@ -276,8 +254,19 @@ impl InspectedArchive {
                     decoded_map,
                 }
             })
-            .map(|filename_field| InspectedEntry {
+            .zip(zip_file.entries.iter())
+            .map(|(filename_field, entry)| InspectedEntry {
                 filename: filename_field,
+                uncompressed_size: entry
+                    .cdh
+                    .zip64
+                    .and_then(|z| z.uncompressed_size)
+                    .unwrap_or(entry.cdh.uncompressed_size as u64),
+                compressed_size: entry
+                    .cdh
+                    .zip64
+                    .and_then(|z| z.compressed_size)
+                    .unwrap_or(entry.cdh.compressed_size as u64),
             })
             .collect::<Vec<_>>();
 
@@ -304,10 +293,10 @@ fn decode_with_encoding(
 
 /// Auto-detect encoding using chardetng and encoding_rs
 ///
-/// Returns decoded string and detected encoding or None if decoding failed
-fn auto_detect_and_decode(data: &[u8]) -> Option<(String, EncodingOrAscii)> {
+/// Returns detected encoding or None if decoding failed
+fn detect_encoding(data: &[u8]) -> Option<EncodingOrAscii> {
     // Try UTF-8 (most common for modern zips)
-    if let Some((decoded, _, _)) = decode_with_encoding(data, UTF_8, false)
+    if let Ok(decoded) = str::from_utf8(data)
         && !decoded.contains('\0')
     {
         let encoding = if data.iter().all(|&b| b.is_ascii()) {
@@ -315,7 +304,7 @@ fn auto_detect_and_decode(data: &[u8]) -> Option<(String, EncodingOrAscii)> {
         } else {
             EncodingOrAscii::Encoding(UTF_8)
         };
-        return Some((decoded, encoding));
+        return Some(encoding);
     }
 
     // Use chardetng for general encoding detection
@@ -323,8 +312,10 @@ fn auto_detect_and_decode(data: &[u8]) -> Option<(String, EncodingOrAscii)> {
     detector.feed(data, true);
 
     let detected_encoding = detector.guess(None, true);
-    if let Some(decoded) = decode_with_encoding(data, detected_encoding, true) {
-        return Some((decoded.0, EncodingOrAscii::Encoding(detected_encoding)));
+    if let Some((_, has_errors, encoding)) = decode_with_encoding(data, detected_encoding, false)
+        && !has_errors
+    {
+        return Some(EncodingOrAscii::Encoding(encoding));
     }
 
     None

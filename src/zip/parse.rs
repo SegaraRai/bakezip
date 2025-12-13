@@ -1,4 +1,4 @@
-use std::io;
+use std::{collections::HashSet, io};
 
 /// Trait for reading data from a zip file or other source
 pub trait ZipReader {
@@ -570,6 +570,8 @@ pub struct CentralDirectoryHeader {
     pub file_comment: Vec<u8>,
     /// Optional Zip64 extended info
     pub zip64: Option<Zip64ExtendedInfo>,
+    /// Optional unicode path extra field
+    pub unicode_path: Option<UnicodePathExtraField>,
 }
 
 impl CentralDirectoryHeader {
@@ -592,7 +594,7 @@ impl CentralDirectoryHeader {
     /// Parse a Central Directory Header from binary data
     pub fn parse(
         data: &[u8],
-        on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
@@ -644,7 +646,8 @@ impl CentralDirectoryHeader {
         let offset = offset + extra_field_length;
         let file_comment = data[offset..offset + file_comment_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data, on_warning)?;
+        let extra_fields =
+            ExtraField::parse_all(&extra_field_data, "CDH Extra Field", &mut on_warning)?;
 
         let zip64 = extra_fields
             .iter()
@@ -659,6 +662,13 @@ impl CentralDirectoryHeader {
                 )
             })
             .transpose()?;
+
+        let unicode_path = extra_fields
+            .iter()
+            .find(|ef| ef.tag == UnicodePathExtraField::TAG)
+            .map(|ef| UnicodePathExtraField::parse(ef, &file_name))
+            .transpose()
+            .or_else(|e| on_warning(e).map(|_| None))?;
 
         Ok(CentralDirectoryHeader {
             signature,
@@ -682,6 +692,7 @@ impl CentralDirectoryHeader {
             extra_fields,
             file_comment,
             zip64,
+            unicode_path,
         })
     }
 }
@@ -717,6 +728,8 @@ pub struct LocalFileHeader {
     pub extra_fields: Vec<ExtraField>,
     /// Optional Zip64 extended info
     pub zip64: Option<Zip64ExtendedInfo>,
+    /// Optional unicode path extra field
+    pub unicode_path: Option<UnicodePathExtraField>,
 }
 
 impl LocalFileHeader {
@@ -736,7 +749,7 @@ impl LocalFileHeader {
     /// Parse a Local File Header from binary data
     pub fn parse(
         data: &[u8],
-        on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
+        mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Self, ZipParseError> {
         if data.len() < Self::MIN_SIZE {
             return Err(ZipParseError::LengthTooShort {
@@ -779,7 +792,8 @@ impl LocalFileHeader {
         let extra_field_data =
             data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
 
-        let extra_fields = ExtraField::parse_all(&extra_field_data, on_warning)?;
+        let extra_fields =
+            ExtraField::parse_all(&extra_field_data, "LFH Extra Field", &mut on_warning)?;
 
         let zip64 = extra_fields
             .iter()
@@ -794,6 +808,13 @@ impl LocalFileHeader {
                 )
             })
             .transpose()?;
+
+        let unicode_path = extra_fields
+            .iter()
+            .find(|ef| ef.tag == UnicodePathExtraField::TAG)
+            .map(|ef| UnicodePathExtraField::parse(ef, &file_name))
+            .transpose()
+            .or_else(|e| on_warning(e).map(|_| None))?;
 
         Ok(LocalFileHeader {
             signature,
@@ -810,6 +831,7 @@ impl LocalFileHeader {
             file_name,
             extra_fields,
             zip64,
+            unicode_path,
         })
     }
 }
@@ -851,9 +873,11 @@ impl ExtraField {
     /// Parse extra fields from raw bytes
     fn parse_all(
         data: &[u8],
+        name: &'static str,
         mut on_warning: impl FnMut(ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Vec<Self>, ZipParseError> {
         let mut fields = Vec::new();
+        let mut seen_tags = HashSet::new();
         let mut offset = 0;
 
         while offset + 4 <= data.len() {
@@ -861,9 +885,13 @@ impl ExtraField {
             let size = parse_u16_le(&data[offset + 2..offset + 4]);
             offset += 4;
 
+            if !seen_tags.insert(tag) {
+                on_warning(ZipParseError::DuplicatedExtraFieldTag { name, tag })?;
+            }
+
             if offset + size as usize > data.len() {
                 return Err(ZipParseError::LengthMismatch {
-                    name: "ExtraField",
+                    name,
                     expected: size as usize,
                     found: data.len() - offset,
                 });
@@ -881,7 +909,7 @@ impl ExtraField {
 
         if offset != data.len() {
             on_warning(ZipParseError::ExtraDataRemaining {
-                name: "ExtraField",
+                name,
                 remaining: data.len() - offset,
             })?;
         }
@@ -968,6 +996,69 @@ impl Zip64ExtendedInfo {
             compressed_size,
             relative_offset,
             disk_start_number,
+        })
+    }
+}
+
+/// Unicode Path Extra Field
+#[derive(Debug, Clone)]
+pub struct UnicodePathExtraField {
+    /// Version
+    pub version: u8,
+    /// Name CRC32
+    pub name_crc32: u32,
+    /// Unicode name
+    pub data: Vec<u8>,
+    /// Parsed UTF-8 string
+    pub decoded_string: Option<String>,
+    /// Whether the CRC32 of the original name matches
+    pub crc32_matched: bool,
+}
+
+impl UnicodePathExtraField {
+    pub const TAG: u16 = 0x7075;
+
+    pub fn parse(field: &ExtraField, original_name: &[u8]) -> Result<Self, ZipParseError> {
+        if field.tag != Self::TAG {
+            return Err(ZipParseError::InvalidExtraFieldTag {
+                name: "UnicodePathExtraField",
+                expected: Self::TAG,
+                found: field.tag,
+            });
+        }
+
+        if field.size < 5 {
+            return Err(ZipParseError::LengthTooShort {
+                name: "UnicodePathExtraField",
+                expected: 5,
+                found: field.size as usize,
+            });
+        }
+
+        let version = field.data[0];
+        if version != 1 {
+            return Err(ZipParseError::UnsupportedVersion {
+                name: "UnicodePathExtraField",
+                expected: 1,
+                found: version,
+            });
+        }
+
+        let name_crc32 = parse_u32_le(&field.data[1..5]);
+        let unicode_name = field.data[5..].to_vec();
+
+        let computed_crc32 =
+            crc_fast::checksum(crc_fast::CrcAlgorithm::Crc32IsoHdlc, original_name) as u32;
+        let crc32_matched = computed_crc32 == name_crc32;
+
+        let unicode_string = String::from_utf8(unicode_name.clone()).ok();
+
+        Ok(UnicodePathExtraField {
+            version,
+            name_crc32,
+            data: unicode_name,
+            decoded_string: unicode_string,
+            crc32_matched,
         })
     }
 }
@@ -1428,6 +1519,14 @@ pub enum ZipParseError {
         expected: u64,
         found: u64,
     },
+    #[error("Duplicated extra field tag in {name}, tag {tag:#06x} appears multiple times")]
+    DuplicatedExtraFieldTag { name: &'static str, tag: u16 },
+    #[error("Unsupported version in {name}, expected {expected} but found {found}")]
+    UnsupportedVersion {
+        name: &'static str,
+        expected: u8,
+        found: u8,
+    },
     #[error("Unknown data found after Data Descriptor")]
     UnknownDataAfterDescriptor,
     #[error("Other error: {0}")]
@@ -1554,7 +1653,7 @@ mod tests {
         data[10..12].copy_from_slice(&2u16.to_le_bytes());
         data[12..14].copy_from_slice(b"ab");
 
-        let result = ExtraField::parse_all(&data, Err);
+        let result = ExtraField::parse_all(&data, "", Err);
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 2);
@@ -1569,7 +1668,7 @@ mod tests {
     #[test]
     fn test_parse_extra_fields_empty() {
         let data: Vec<u8> = vec![];
-        let result = ExtraField::parse_all(&data, Err);
+        let result = ExtraField::parse_all(&data, "", Err);
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 0);

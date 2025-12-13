@@ -6,6 +6,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::Blob;
 
 use crate::zip::{
+    compatibility::CompatibilityLevel,
     inspect::{InspectConfig, InspectedArchive},
     parse::{ZipFile, ZipParseError, ZipReader},
 };
@@ -14,6 +15,7 @@ use crate::zip::{
 pub struct ZipProcessor {
     blob: Blob,
     zip_file: ZipFile,
+    compatibility: CompatibilityLevel,
     warnings: Vec<(Option<u64>, ZipParseError)>,
 }
 
@@ -31,11 +33,18 @@ impl ZipProcessor {
         let (zip_file, warnings) = ZipFile::parse_with_warnings(&mut reader)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to parse zip: {e}")))?;
+        let compatibility = CompatibilityLevel::analyze(&zip_file);
         Ok(ZipProcessor {
             blob,
             zip_file,
+            compatibility,
             warnings,
         })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn compatibility(&self) -> CompatibilityLevel {
+        self.compatibility
     }
 
     pub fn get_warnings(&self) -> Result<Vec<ZipWarning>, JsValue> {
