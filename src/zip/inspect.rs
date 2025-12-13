@@ -47,6 +47,8 @@ pub struct InspectedArchive {
     /// The decoded entries
     pub entries: Vec<InspectedEntry>,
     /// The overall detected encoding for the archive
+    /// None if detection failed or an error occurred during decoding
+    /// If present, this encoding can be used to decode all filenames in the archive without errors
     pub overall_encoding: Option<String>,
 }
 
