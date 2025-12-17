@@ -75,12 +75,12 @@ impl CompatibilityLevel {
             for (flags, filename, unicode_path) in [
                 (
                     &entry.cdh.flags,
-                    &entry.cdh.file_name,
+                    &entry.cdh.filename,
                     &entry.cdh.unicode_path,
                 ),
                 (
                     &entry.lfh.flags,
-                    &entry.lfh.file_name,
+                    &entry.lfh.filename,
                     &entry.lfh.unicode_path,
                 ),
             ] {

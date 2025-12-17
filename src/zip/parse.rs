@@ -319,9 +319,9 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
                 });
             }
 
-            let file_name_len = parse_u16_le(&lfh_data[26..28]) as usize;
+            let filename_len = parse_u16_le(&lfh_data[26..28]) as usize;
             let extra_field_len = parse_u16_le(&lfh_data[28..30]) as usize;
-            let lfh_full_size = LocalFileHeader::MIN_SIZE + file_name_len + extra_field_len;
+            let lfh_full_size = LocalFileHeader::MIN_SIZE + filename_len + extra_field_len;
 
             reader
                 .read(cdh.local_header_offset as u64, lfh_full_size as u64)
@@ -548,8 +548,8 @@ pub struct CentralDirectoryHeader {
     pub compressed_size: u32,
     /// Uncompressed size
     pub uncompressed_size: u32,
-    /// File name length
-    pub file_name_length: u16,
+    /// Filename length
+    pub filename_length: u16,
     /// Extra field length
     pub extra_field_length: u16,
     /// File comment length
@@ -562,8 +562,8 @@ pub struct CentralDirectoryHeader {
     pub external_file_attributes: u32,
     /// Relative offset of local header
     pub local_header_offset: u32,
-    /// File name
-    pub file_name: Vec<u8>,
+    /// Filename
+    pub filename: Vec<u8>,
     /// Parsed extra fields
     pub extra_fields: Vec<ExtraField>,
     /// File comment
@@ -581,7 +581,7 @@ impl CentralDirectoryHeader {
     /// Get total size of CDH including variable-length fields
     pub fn len(&self) -> usize {
         Self::MIN_SIZE
-            + self.file_name_length as usize
+            + self.filename_length as usize
             + self.extra_field_length as usize
             + self.file_comment_length as usize
     }
@@ -622,7 +622,7 @@ impl CentralDirectoryHeader {
         let crc32 = parse_u32_le(&data[16..20]);
         let compressed_size = parse_u32_le(&data[20..24]);
         let uncompressed_size = parse_u32_le(&data[24..28]);
-        let file_name_length = parse_u16_le(&data[28..30]) as usize;
+        let filename_length = parse_u16_le(&data[28..30]) as usize;
         let extra_field_length = parse_u16_le(&data[30..32]) as usize;
         let file_comment_length = parse_u16_le(&data[32..34]) as usize;
         let disk_number_start = parse_u16_le(&data[34..36]);
@@ -630,7 +630,7 @@ impl CentralDirectoryHeader {
         let external_file_attributes = parse_u32_le(&data[38..42]);
         let local_header_offset = parse_u32_le(&data[42..46]);
 
-        let expected_len = 46 + file_name_length + extra_field_length + file_comment_length;
+        let expected_len = 46 + filename_length + extra_field_length + file_comment_length;
         if data.len() < expected_len {
             return Err(ZipParseError::LengthTooShort {
                 name: "CDH",
@@ -640,8 +640,8 @@ impl CentralDirectoryHeader {
         }
 
         let offset = 46;
-        let file_name = data[offset..offset + file_name_length].to_vec();
-        let offset = offset + file_name_length;
+        let filename = data[offset..offset + filename_length].to_vec();
+        let offset = offset + filename_length;
         let extra_field_data = data[offset..offset + extra_field_length].to_vec();
         let offset = offset + extra_field_length;
         let file_comment = data[offset..offset + file_comment_length].to_vec();
@@ -666,7 +666,7 @@ impl CentralDirectoryHeader {
         let unicode_path = extra_fields
             .iter()
             .find(|ef| ef.tag == UnicodePathExtraField::TAG)
-            .map(|ef| UnicodePathExtraField::parse(ef, &file_name))
+            .map(|ef| UnicodePathExtraField::parse(ef, &filename))
             .transpose()
             .or_else(|e| on_warning(e).map(|_| None))?;
 
@@ -681,14 +681,14 @@ impl CentralDirectoryHeader {
             crc32,
             compressed_size,
             uncompressed_size,
-            file_name_length: file_name_length as u16,
+            filename_length: filename_length as u16,
             extra_field_length: extra_field_length as u16,
             file_comment_length: file_comment_length as u16,
             disk_number_start,
             internal_file_attributes,
             external_file_attributes,
             local_header_offset,
-            file_name,
+            filename,
             extra_fields,
             file_comment,
             zip64,
@@ -718,12 +718,12 @@ pub struct LocalFileHeader {
     pub compressed_size: u32,
     /// Uncompressed size
     pub uncompressed_size: u32,
-    /// File name length
-    pub file_name_length: u16,
+    /// Filename length
+    pub filename_length: u16,
     /// Extra field length
     pub extra_field_length: u16,
-    /// File name
-    pub file_name: Vec<u8>,
+    /// Filename
+    pub filename: Vec<u8>,
     /// Parsed extra fields
     pub extra_fields: Vec<ExtraField>,
     /// Optional Zip64 extended info
@@ -738,7 +738,7 @@ impl LocalFileHeader {
 
     /// Get total size of LFH including variable-length fields
     pub fn len(&self) -> usize {
-        Self::MIN_SIZE + self.file_name_length as usize + self.extra_field_length as usize
+        Self::MIN_SIZE + self.filename_length as usize + self.extra_field_length as usize
     }
 
     /// Returns false
@@ -776,10 +776,10 @@ impl LocalFileHeader {
         let crc32 = parse_u32_le(&data[14..18]);
         let compressed_size = parse_u32_le(&data[18..22]);
         let uncompressed_size = parse_u32_le(&data[22..26]);
-        let file_name_length = parse_u16_le(&data[26..28]) as usize;
+        let filename_length = parse_u16_le(&data[26..28]) as usize;
         let extra_field_length = parse_u16_le(&data[28..30]) as usize;
 
-        let expected_len = 30 + file_name_length + extra_field_length;
+        let expected_len = 30 + filename_length + extra_field_length;
         if data.len() < expected_len {
             return Err(ZipParseError::LengthTooShort {
                 name: "LFH",
@@ -788,9 +788,9 @@ impl LocalFileHeader {
             });
         }
 
-        let file_name = data[30..30 + file_name_length].to_vec();
+        let filename = data[30..30 + filename_length].to_vec();
         let extra_field_data =
-            data[30 + file_name_length..30 + file_name_length + extra_field_length].to_vec();
+            data[30 + filename_length..30 + filename_length + extra_field_length].to_vec();
 
         let extra_fields =
             ExtraField::parse_all(&extra_field_data, "LFH Extra Field", &mut on_warning)?;
@@ -812,7 +812,7 @@ impl LocalFileHeader {
         let unicode_path = extra_fields
             .iter()
             .find(|ef| ef.tag == UnicodePathExtraField::TAG)
-            .map(|ef| UnicodePathExtraField::parse(ef, &file_name))
+            .map(|ef| UnicodePathExtraField::parse(ef, &filename))
             .transpose()
             .or_else(|e| on_warning(e).map(|_| None))?;
 
@@ -826,9 +826,9 @@ impl LocalFileHeader {
             crc32,
             compressed_size,
             uncompressed_size,
-            file_name_length: file_name_length as u16,
+            filename_length: filename_length as u16,
             extra_field_length: extra_field_length as u16,
-            file_name,
+            filename,
             extra_fields,
             zip64,
             unicode_path,
@@ -1045,19 +1045,19 @@ impl UnicodePathExtraField {
         }
 
         let name_crc32 = parse_u32_le(&field.data[1..5]);
-        let unicode_name = field.data[5..].to_vec();
+        let utf8_data = field.data[5..].to_vec();
 
         let computed_crc32 =
             crc_fast::checksum(crc_fast::CrcAlgorithm::Crc32IsoHdlc, original_name) as u32;
         let crc32_matched = computed_crc32 == name_crc32;
 
-        let unicode_string = String::from_utf8(unicode_name.clone()).ok();
+        let utf8_string = String::from_utf8(utf8_data.clone()).ok();
 
         Ok(UnicodePathExtraField {
             version,
             name_crc32,
-            data: unicode_name,
-            decoded_string: unicode_string,
+            data: utf8_data,
+            decoded_string: utf8_string,
             crc32_matched,
         })
     }

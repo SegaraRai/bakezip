@@ -63,7 +63,8 @@ impl ZipProcessor {
     }
 
     pub fn inspect(&self, config: &InspectConfig) -> Result<InspectedArchive, JsValue> {
-        Ok(InspectedArchive::inspect(&self.zip_file, config))
+        InspectedArchive::inspect(&self.zip_file, config)
+            .map_err(|e| JsValue::from_str(&format!("Failed to inspect zip archive: {e}")))
     }
 }
 

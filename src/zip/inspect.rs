@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use chardetng::EncodingDetector;
 use encoding_rs::{Encoding, UTF_8};
 use serde::{Deserialize, Serialize};
@@ -17,20 +15,67 @@ use super::parse::ZipFile;
     tsify(into_wasm_abi, from_wasm_abi)
 )]
 pub struct InspectConfig {
-    /// Whether to ignore UTF-8 extra fields
-    ///
-    /// Should be true only when the archive is known to be created by a broken implementation
-    pub ignore_extra_fields: bool,
+    /// Encoding selection strategy for filename decoding
+    pub encoding: EncodingSelectionStrategy,
+    /// Field selection strategy for filename decoding
+    pub field_selection_strategy: FieldSelectionStrategy,
     /// Whether to ignore CRC32 mismatches in UTF-8 extra fields
     ///
     /// Should be true only when the archive is known to be created by a broken implementation
     pub ignore_crc32_mismatch: bool,
-    /// Whether to prefer Local File Header fields over Central Directory Header fields
-    ///
-    /// Should be true only when the archive is known to be created by a broken implementation
-    pub prefer_lfh: bool,
-    /// Additional encoding to try
-    pub additional_encoding: Option<String>,
+    /// Whether to require original bytes for inspected filename fields
+    pub needs_original_bytes: bool,
+}
+
+/// Strategy for selecting which filename field to use
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+pub enum FieldSelectionStrategy {
+    #[default]
+    CdhUnicodeThenLfhUnicodeThenCdh,
+    CdhUnicodeThenLfhUnicodeThenLfh,
+    LfhUnicodeThenCdhUnicodeThenCdh,
+    LfhUnicodeThenCdhUnicodeThenLfh,
+    CdhUnicodeThenCdh,
+    CdhOnly,
+    LfhUnicodeThenLfh,
+    LfhOnly,
+}
+
+/// Strategy for selecting encoding
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+pub enum EncodingSelectionStrategy {
+    /// Use overall detected encoding if available, then try detected encoding per entry, then fallback to default
+    PreferOverallDetected {
+        fallback_encoding: Option<String>,
+        ignore_utf8_flag: bool,
+    },
+    /// Use detected encoding per entry if available, then fallback to default
+    EntryDetected {
+        fallback_encoding: Option<String>,
+        ignore_utf8_flag: bool,
+    },
+    /// Always use the specified encoding
+    ForceSpecified {
+        encoding: String,
+        ignore_utf8_flag: bool,
+    },
 }
 
 /// Inspected ZIP archive
@@ -87,11 +132,11 @@ pub struct InspectedFilenameField {
     /// Whether the UTF-8 flag is set for this field
     pub utf8_flag: bool,
     /// The original bytes before decoding
-    pub original_bytes: Vec<u8>,
+    pub original_bytes: Option<Vec<u8>>,
     /// The detected encoding used for decoding
     pub detected_encoding: Option<String>,
-    /// The decoded filename, if decoding was successful
-    pub decoded_map: BTreeMap<String, DecodedString>,
+    /// The decoded filename
+    pub decoded: Option<DecodedString>,
 }
 
 /// Decoded string with metadata
@@ -109,8 +154,6 @@ pub struct DecodedString {
     pub string: String,
     /// Whether there were decoding errors
     pub has_errors: bool,
-    /// The encoding specified for decoding
-    pub encoding_specified: String,
     /// The encoding used for decoding
     pub encoding_used: String,
 }
@@ -127,133 +170,200 @@ pub struct DecodedString {
 )]
 pub enum InspectedFilenameFieldKind {
     /// Central Directory Header File Name Field
-    CdhFileName,
+    CdhFilename,
     /// Central Directory Header "up" Extra Field (UTF-8)
-    CdhExtraFieldUtf8,
+    CdhUnicodePathExtraField,
     /// Local File Header File Name Field
-    LfhFileName,
+    LfhFilename,
     /// Local File Header "up" Extra Field (UTF-8)
-    LfhExtraField,
+    LfhUnicodePathExtraField,
 }
 
 impl InspectedArchive {
-    pub fn inspect(zip_file: &ZipFile, config: &InspectConfig) -> Self {
-        struct PreDetectInspectedFileEntry<'a> {
+    pub fn inspect(zip_file: &ZipFile, config: &InspectConfig) -> Result<Self, ZipInspectError> {
+        let fields = match config.field_selection_strategy {
+            FieldSelectionStrategy::CdhUnicodeThenLfhUnicodeThenCdh => &[
+                InspectedFilenameFieldKind::CdhUnicodePathExtraField,
+                InspectedFilenameFieldKind::LfhUnicodePathExtraField,
+                InspectedFilenameFieldKind::CdhFilename,
+            ][..],
+            FieldSelectionStrategy::CdhUnicodeThenLfhUnicodeThenLfh => &[
+                InspectedFilenameFieldKind::CdhUnicodePathExtraField,
+                InspectedFilenameFieldKind::LfhUnicodePathExtraField,
+                InspectedFilenameFieldKind::LfhFilename,
+            ][..],
+            FieldSelectionStrategy::LfhUnicodeThenCdhUnicodeThenCdh => &[
+                InspectedFilenameFieldKind::LfhUnicodePathExtraField,
+                InspectedFilenameFieldKind::CdhUnicodePathExtraField,
+                InspectedFilenameFieldKind::CdhFilename,
+            ][..],
+            FieldSelectionStrategy::LfhUnicodeThenCdhUnicodeThenLfh => &[
+                InspectedFilenameFieldKind::LfhUnicodePathExtraField,
+                InspectedFilenameFieldKind::CdhUnicodePathExtraField,
+                InspectedFilenameFieldKind::LfhFilename,
+            ][..],
+            FieldSelectionStrategy::CdhUnicodeThenCdh => &[
+                InspectedFilenameFieldKind::CdhUnicodePathExtraField,
+                InspectedFilenameFieldKind::CdhFilename,
+            ][..],
+            FieldSelectionStrategy::CdhOnly => &[InspectedFilenameFieldKind::CdhFilename][..],
+            FieldSelectionStrategy::LfhUnicodeThenLfh => &[
+                InspectedFilenameFieldKind::LfhUnicodePathExtraField,
+                InspectedFilenameFieldKind::LfhFilename,
+            ][..],
+            FieldSelectionStrategy::LfhOnly => &[InspectedFilenameFieldKind::LfhFilename][..],
+        };
+
+        struct FieldSelectedFileEntry<'a> {
             kind: InspectedFilenameFieldKind,
             utf8_flag: bool,
             original_bytes: &'a [u8],
         }
 
-        let predetected_entries = zip_file
+        let predetect_entries = zip_file
             .entries
             .iter()
             .map(|entry| {
-                if config.prefer_lfh {
-                    entry
-                        .lfh
-                        .unicode_path
-                        .as_ref()
-                        .and_then(|up| {
-                            if config.ignore_extra_fields
-                                || (!config.ignore_crc32_mismatch && up.crc32_matched)
-                            {
-                                None
-                            } else {
-                                Some(&up.data)
-                            }
-                        })
-                        .map_or(
-                            PreDetectInspectedFileEntry {
-                                kind: InspectedFilenameFieldKind::LfhFileName,
-                                utf8_flag: entry.lfh.flags.is_utf8(),
-                                original_bytes: &entry.lfh.file_name,
-                            },
-                            |data| PreDetectInspectedFileEntry {
-                                kind: InspectedFilenameFieldKind::LfhExtraField,
-                                utf8_flag: true,
-                                original_bytes: data,
-                            },
-                        )
-                } else {
-                    entry
-                        .cdh
-                        .unicode_path
-                        .as_ref()
-                        .and_then(|up| {
-                            if config.ignore_extra_fields
-                                || (!config.ignore_crc32_mismatch && up.crc32_matched)
-                            {
-                                None
-                            } else {
-                                Some(&up.data)
-                            }
-                        })
-                        .map_or(
-                            PreDetectInspectedFileEntry {
-                                kind: InspectedFilenameFieldKind::CdhFileName,
+                for &kind in fields {
+                    match kind {
+                        InspectedFilenameFieldKind::CdhFilename => {
+                            return FieldSelectedFileEntry {
+                                kind,
                                 utf8_flag: entry.cdh.flags.is_utf8(),
-                                original_bytes: &entry.cdh.file_name,
-                            },
-                            |data| PreDetectInspectedFileEntry {
-                                kind: InspectedFilenameFieldKind::CdhExtraFieldUtf8,
-                                utf8_flag: true,
-                                original_bytes: data,
-                            },
-                        )
+                                original_bytes: &entry.cdh.filename,
+                            };
+                        }
+                        InspectedFilenameFieldKind::LfhFilename => {
+                            return FieldSelectedFileEntry {
+                                kind,
+                                utf8_flag: entry.lfh.flags.is_utf8(),
+                                original_bytes: &entry.lfh.filename,
+                            };
+                        }
+                        InspectedFilenameFieldKind::CdhUnicodePathExtraField => {
+                            if let Some(up) = &entry.cdh.unicode_path
+                                && (config.ignore_crc32_mismatch || !up.crc32_matched)
+                            {
+                                return FieldSelectedFileEntry {
+                                    kind,
+                                    utf8_flag: true,
+                                    original_bytes: &up.data,
+                                };
+                            }
+                        }
+                        InspectedFilenameFieldKind::LfhUnicodePathExtraField => {
+                            if let Some(up) = &entry.lfh.unicode_path
+                                && (config.ignore_crc32_mismatch || !up.crc32_matched)
+                            {
+                                return FieldSelectedFileEntry {
+                                    kind,
+                                    utf8_flag: true,
+                                    original_bytes: &up.data,
+                                };
+                            }
+                        }
+                    }
                 }
+
+                unreachable!("At least one field should be selected")
             })
             .collect::<Vec<_>>();
 
-        let concatenated_filename_bytes = predetected_entries
+        let concatenated_filename_bytes = predetect_entries
             .iter()
-            .flat_map(|e| e.original_bytes)
+            .flat_map(|entry| entry.original_bytes)
             .copied()
             .collect::<Vec<_>>();
         let overall_encoding = detect_encoding(&concatenated_filename_bytes);
 
-        let additional_encoding = config
-            .additional_encoding
-            .as_ref()
-            .and_then(|enc_name| Encoding::for_label(enc_name.as_bytes()))
-            .map(EncodingOrAscii::Encoding);
+        let user_encoding = match &config.encoding {
+            EncodingSelectionStrategy::PreferOverallDetected {
+                fallback_encoding,
+                ignore_utf8_flag: _,
+            }
+            | EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding,
+                ignore_utf8_flag: _,
+            } => {
+                if let Some(enc_name) = fallback_encoding {
+                    let encoding = Encoding::for_label(enc_name.as_bytes())
+                        .ok_or(ZipInspectError::EncodingNotFound(enc_name.clone()))?;
+                    Some(EncodingOrAscii::Encoding(encoding))
+                } else {
+                    None
+                }
+            }
+            EncodingSelectionStrategy::ForceSpecified {
+                encoding: enc_name,
+                ignore_utf8_flag: _,
+            } => {
+                let encoding = Encoding::for_label(enc_name.as_bytes())
+                    .ok_or(ZipInspectError::EncodingNotFound(enc_name.clone()))?;
+                Some(EncodingOrAscii::Encoding(encoding))
+            }
+        };
 
-        let entries = predetected_entries
+        let ignore_utf8_flag = match &config.encoding {
+            EncodingSelectionStrategy::PreferOverallDetected {
+                fallback_encoding: _,
+                ignore_utf8_flag,
+            }
+            | EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: _,
+                ignore_utf8_flag,
+            }
+            | EncodingSelectionStrategy::ForceSpecified {
+                encoding: _,
+                ignore_utf8_flag,
+            } => *ignore_utf8_flag,
+        };
+
+        let entries = predetect_entries
             .into_iter()
-            .map(|predetected| {
-                let detected_encoding = detect_encoding(predetected.original_bytes);
+            .map(|predetect| {
+                let detected_encoding = detect_encoding(predetect.original_bytes);
 
-                let all_encodings = [&detected_encoding, &overall_encoding, &additional_encoding]
-                    .into_iter()
-                    .copied()
-                    .flatten();
-
-                let mut decoded_map = BTreeMap::new();
-                for encoding in all_encodings {
-                    if decoded_map.contains_key(encoding.name()) {
-                        continue;
+                let encoding = if !ignore_utf8_flag && predetect.utf8_flag {
+                    Some(EncodingOrAscii::Encoding(UTF_8))
+                } else {
+                    match &config.encoding {
+                        EncodingSelectionStrategy::PreferOverallDetected {
+                            fallback_encoding: _,
+                            ignore_utf8_flag: _,
+                        } => overall_encoding.or(detected_encoding).or(user_encoding),
+                        EncodingSelectionStrategy::EntryDetected {
+                            fallback_encoding: _,
+                            ignore_utf8_flag: _,
+                        } => detected_encoding.or(user_encoding),
+                        EncodingSelectionStrategy::ForceSpecified {
+                            encoding: _,
+                            ignore_utf8_flag: _,
+                        } => user_encoding,
                     }
+                };
 
-                    let (decoded, has_errors, encoding_used) =
-                        decode_with_encoding(predetected.original_bytes, encoding.encoding(), true)
-                            .unwrap();
-
-                    decoded_map.insert(
-                        encoding.name().to_string(),
-                        DecodedString {
-                            string: decoded,
+                let decoded = encoding.and_then(|enc| {
+                    decode_with_encoding(predetect.original_bytes, enc.encoding(), true).map(
+                        |(string, has_errors, encoding_used)| DecodedString {
+                            string,
                             has_errors,
-                            encoding_specified: encoding.name().to_string(),
                             encoding_used: encoding_used.name().to_string(),
                         },
-                    );
-                }
+                    )
+                });
+
+                let original_bytes = if config.needs_original_bytes {
+                    Some(predetect.original_bytes.to_vec())
+                } else {
+                    None
+                };
 
                 InspectedFilenameField {
-                    kind: predetected.kind,
-                    utf8_flag: predetected.utf8_flag,
-                    original_bytes: predetected.original_bytes.to_vec(),
+                    kind: predetect.kind,
+                    utf8_flag: predetect.utf8_flag,
+                    original_bytes,
                     detected_encoding: detected_encoding.map(|e| e.name().to_string()),
-                    decoded_map,
+                    decoded,
                 }
             })
             .zip(zip_file.entries.iter())
@@ -272,10 +382,10 @@ impl InspectedArchive {
             })
             .collect::<Vec<_>>();
 
-        Self {
+        Ok(Self {
             overall_encoding: overall_encoding.map(|e| e.name().to_string()),
             entries,
-        }
+        })
     }
 }
 
@@ -344,4 +454,11 @@ impl EncodingOrAscii {
             EncodingOrAscii::Encoding(enc) => enc,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Zip inspect error: {0}")]
+pub enum ZipInspectError {
+    #[error("Encoding '{0}' not found")]
+    EncodingNotFound(String),
 }
