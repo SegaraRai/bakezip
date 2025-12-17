@@ -16,6 +16,7 @@
   import LineMdDownload from "../icons/LineMdDownload.svelte";
   import LineMdLoadingLoop from "../icons/LineMdLoadingLoop.svelte";
   import { createI18n, type Locale } from "../lib/i18n";
+  import LineMdAlertCircle from "../icons/LineMdAlertCircle.svelte";
 
   const { locale }: { locale: Locale } = $props();
   const m = $derived.by(() => createI18n(locale));
@@ -33,6 +34,7 @@
   let fieldSelection = $state<FieldSelectionStrategy>(
     "CdhUnicodeThenLfhUnicodeThenCdh",
   );
+  let removeOSMetadataFiles = $state(false);
   let forceProceedToStep2 = $state(false);
   let forceProceedToStep3 = $state(false);
 
@@ -90,6 +92,16 @@
     }, 0);
   });
 
+  const hasOSMetadataFiles = $derived.by(() => {
+    if (!inspectedArchive) {
+      return false;
+    }
+
+    return inspectedArchive.entries.some((entry) =>
+      isOSMetadataFile(entry.filename.decoded?.string ?? ""),
+    );
+  });
+
   const shouldStopAtStep1 = $derived.by(
     () => compatibilityCategory.level === "ok",
   );
@@ -115,6 +127,15 @@
       return `${s} ${sizes[i]}`;
     };
   });
+
+  function isOSMetadataFile(filename: string): boolean {
+    return (
+      // directories and files
+      /(?:^|\/)(?:__macosx\/|\.ds_store)(?:\/|$)/i.test(filename) ||
+      // files
+      /(?:^|\/)(?:thumbs\.db|desktop\.ini)$/i.test(filename)
+    );
+  }
 
   async function handleFileSelect(event: Event) {
     const input = event.target as HTMLInputElement;
@@ -143,6 +164,7 @@
     compatibility = null;
     forceProceedToStep2 = false;
     forceProceedToStep3 = false;
+    removeOSMetadataFiles = false;
 
     try {
       await init();
@@ -547,9 +569,15 @@
                         {#each inspectedArchive.entries as entry}
                           <tr>
                             <td
-                              class="min-w-40 truncate data-[error=true]:text-error"
-                              data-error={entry.filename.decoded?.has_errors !==
-                                false}
+                              class="min-w-40 truncate data-[status=error]:text-error data-[status=metadata]:text-info"
+                              data-status={entry.filename.decoded
+                                ?.has_errors !== false
+                                ? "error"
+                                : isOSMetadataFile(
+                                      entry.filename.decoded.string,
+                                    )
+                                  ? "metadata"
+                                  : "none"}
                               title={entry.filename.decoded?.string}
                             >
                               {#if entry.filename.decoded}
@@ -652,6 +680,32 @@
             </div>
 
             <div class="space-y-4">
+              {#if hasOSMetadataFiles}
+                <div class="space-y-2">
+                  <div role="alert" aria-live="polite" class="alert alert-info">
+                    <LineMdAlertCircle class="size-10" />
+                    <div>
+                      <h3 class="font-bold">
+                        {m.step3_os_metadata_detected_title()}
+                      </h3>
+                      <p class="text-sm">
+                        {m.step3_os_metadata_detected_description()}
+                      </p>
+                    </div>
+                  </div>
+                  <label class="label mt-2">
+                    <input
+                      name="remove-os-metadata"
+                      type="checkbox"
+                      class="peer checkbox"
+                      bind:checked={removeOSMetadataFiles}
+                    />
+                    <span class="peer-checked:text-primary">
+                      {m.step3_remove_os_metadata_files()}
+                    </span>
+                  </label>
+                </div>
+              {/if}
               <p class="text-base-content/70">
                 {m.step3_description()}
               </p>
