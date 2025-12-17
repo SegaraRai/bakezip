@@ -60,11 +60,19 @@
   "step3_title": "変換してダウンロード",
   "step3_description": "下のボタンをクリックして、メタデータが修正されたZIPファイルをダウンロードしてください。",
   "step3_download_button": "修正されたZIPファイルをダウンロード",
-  "step3_download_alert": "ダウンロード機能は将来実装される予定です！",
   "footer_privacy_text": "すべての処理はブラウザ内でローカルに行われます。ファイルがアップロードされることはありません。",
-  "footer_privacy_link": "プライバシーポリシー",
+  "footer_privacy_link": "プライバシーポリシー（英語）",
   "bytes_unit_b": "B",
   "bytes_unit_kb": "KB",
   "bytes_unit_mb": "MB",
-  "bytes_unit_gb": "GB"
+  "bytes_unit_gb": "GB",
+  "language_selector_label": "言語を選択",
+  "language_suggestion_title": "翻訳が利用可能です",
+  "language_suggestion_text": "{language}に切り替えますか？",
+  "language_suggestion_dismiss": "いいえ",
+  "language_suggestion_accept": "はい",
+  "theme_selector_label": "テーマを選択",
+  "theme_light": "ライト",
+  "theme_dark": "ダーク",
+  "theme_system": "システム"
 }

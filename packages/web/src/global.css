@@ -4,7 +4,7 @@
 @plugin "daisyui" {
   themes:
     winter --default,
-    night 
+    night;
 }
 
 /* Reduce motion for SVG animations */
@@ -22,7 +22,9 @@
     display: none !important;
   }
 
-  .checkbox, .checkbox::before, .checkbox::after {
+  .checkbox,
+  .checkbox::before,
+  .checkbox::after {
     transition-duration: 0ms !important;
     transition-delay: 0ms !important;
   }

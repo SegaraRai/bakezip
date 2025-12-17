@@ -1,9 +1,13 @@
 ---
 import "../global.css";
-import { createI18n } from "../lib/i18n";
+import { createI18n, type Locale } from "../lib/i18n";
+import { locales } from "../paraglide/runtime";
+import ThemeSelector from "../components/ThemeSelector.svelte";
+import LanguageSelector from "../components/LanguageSelector.svelte";
+import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
 
 interface Props {
-  locale: string;
+  locale: Locale;
   rootClass?: any;
   bodyClass?: any;
   mainClass?: any;
@@ -15,15 +19,49 @@ const m = createI18n(locale);
 ---
 
 <!doctype html>
-<html lang={locale} class:list={Astro.props.rootClass}>
+<html lang={locale} class="bg-base-300" class:list={Astro.props.rootClass}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{Astro.props.title ?? "BakeZip"}</title>
+    <script is:inline>
+      (() => {
+        let theme = "light";
+        try {
+          theme = localStorage.getItem("theme");
+          if (!theme || theme === "system") {
+            theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          }
+          theme = { light: "winter", dark: "night" }[theme] ?? theme;
+        } catch {}
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body class:list={Astro.props.bodyClass}>
+    <div
+      class="fixed top-0 right-0 px-6 py-4 flex gap-2 justify-end z-50 not-lg:w-full bg-base-300/75 backdrop-blur-sm lg:rounded-bl-md"
+    >
+      <LanguageSelector
+        client:idle
+        currentLocale={locale}
+        pathname={Astro.url.pathname}
+      />
+      <ThemeSelector client:idle locale={locale} />
+    </div>
+    <LanguageSuggestion
+      client:idle
+      currentLocale={locale}
+      pathname={Astro.url.pathname}
+    />
     <main class:list={Astro.props.mainClass ?? "contents"}>
+      <!-- Top Padding For Fixed Header -->
+      <div class="w-full h-18 lg:hidden"></div>
       <slot />
+      <!-- Bottom Padding For Language Suggestion Toast -->
+      <div class="w-full h-20"></div>
     </main>
   </body>
 </html>

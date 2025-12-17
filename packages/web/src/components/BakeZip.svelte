@@ -15,9 +15,9 @@
   import LineMdDownloadLoop from "../icons/LineMdDownloadLoop.svelte";
   import LineMdDownload from "../icons/LineMdDownload.svelte";
   import LineMdLoadingLoop from "../icons/LineMdLoadingLoop.svelte";
-  import { createI18n } from "../lib/i18n";
+  import { createI18n, type Locale } from "../lib/i18n";
 
-  const { locale }: { locale: string } = $props();
+  const { locale }: { locale: Locale } = $props();
   const m = $derived.by(() => createI18n(locale));
 
   let selectedFile = $state<File | null>(null);
@@ -100,10 +100,10 @@
     const K = 1024;
 
     const sizes = [
-      m["bytes_unit_b"](),
-      m["bytes_unit_kb"](),
-      m["bytes_unit_mb"](),
-      m["bytes_unit_gb"](),
+      m.bytes_unit_b(),
+      m.bytes_unit_kb(),
+      m.bytes_unit_mb(),
+      m.bytes_unit_gb(),
     ];
 
     return (bytes: number): string => {
@@ -131,7 +131,7 @@
 
   async function processZip() {
     if (!selectedFile) {
-      error = m["step1_error_no_file"]();
+      error = m.step1_error_no_file();
       return;
     }
 
@@ -246,22 +246,22 @@
   }
 
   function handleDownload() {
-    alert(m["step3_download_alert"]());
+    alert("Not Implemented Yet"); // TODO
   }
 </script>
 
-<div class="min-h-screen bg-base-300 p-4 md:p-8">
+<div class="p-4 md:p-8">
   <div class="mx-auto max-w-6xl">
     <!-- Header -->
     <div class="mb-8 text-center">
       <h1 class="mb-2 text-4xl font-bold text-base-content">
-        {m["header_title"]()}
+        {m.header_title()}
       </h1>
       <p class="text-lg text-base-content/80">
-        {m["header_tagline"]()}
+        {m.header_tagline()}
       </p>
       <p class="mt-2 text-sm text-base-content/60">
-        {m["header_description"]()}
+        {m.header_description()}
       </p>
     </div>
 
@@ -274,15 +274,15 @@
             <span
               class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
               data-step="1"
-              aria-label={m["step1_alt"]()}
+              aria-label={m.step1_alt()}
             ></span>
-            <h2 class="card-title text-2xl">{m["step1_title"]()}</h2>
+            <h2 class="card-title text-2xl">{m.step1_title()}</h2>
           </div>
 
           <!-- File Upload Section -->
           <div class="mb-4">
             <p class="mb-3 text-sm text-base-content/70">
-              {m["step1_info"]()}
+              {m.step1_info()}
             </p>
             <div
               class="relative flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-base-200 px-3 py-6 not-motion-reduce:transition cursor-wait has-focus-visible:border-primary has-enabled:cursor-pointer has-enabled:hover:border-primary has-enabled:hover:bg-base-300"
@@ -305,7 +305,7 @@
                   </div>
                 {:else}
                   <p class="text-base-content/70 pt-2">
-                    {m["step1_file_placeholder"]()}
+                    {m.step1_file_placeholder()}
                   </p>
                 {/if}
               </div>
@@ -318,7 +318,7 @@
               <span
                 class="size-10 icon-[mdi--hourglass] not-motion-reduce:hidden"
               ></span>
-              <span>{m["step1_processing"]()}</span>
+              <span>{m.step1_processing()}</span>
             </div>
           {/if}
 
@@ -340,7 +340,7 @@
               <div class="flex items-center gap-2">
                 <LineMdAlert class="size-10" />
                 <h3 class="font-bold">
-                  {m["step1_warnings_title"]({ count: warnings.length })}
+                  {m.step1_warnings_title({ count: warnings.length })}
                 </h3>
               </div>
               <ul class="list-disc list-inside text-sm">
@@ -348,7 +348,7 @@
                   <li>
                     {#if warning.index !== null && warning.index !== undefined}
                       <span class="[font-feature-settings:tnum] min-w-30"
-                        >{m["step1_warning_entry_prefix"]({
+                        >{m.step1_warning_entry_prefix({
                           index: warning.index,
                         })}</span
                       >
@@ -376,7 +376,7 @@
                 <LineMdAlert class="size-10" />
               {/if}
               <div>
-                <h3 class="font-bold">{m["compatibility_title"]()}</h3>
+                <h3 class="font-bold">{m.compatibility_title()}</h3>
                 <p class="text-sm">
                   {m[compatibilityCategory.message]()}
                 </p>
@@ -394,7 +394,7 @@
                   bind:checked={forceProceedToStep2}
                 />
                 <span class="peer-checked:text-primary"
-                  >{m["step1_process_anyway"]()}</span
+                  >{m.step1_process_anyway()}</span
                 >
               </label>
             </div>
@@ -415,9 +415,9 @@
               <span
                 class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
                 data-step="2"
-                aria-label={m["step2_alt"]()}
+                aria-label={m.step2_alt()}
               ></span>
-              <h2 class="card-title flex-1 text-2xl">{m["step2_title"]()}</h2>
+              <h2 class="card-title flex-1 text-2xl">{m.step2_title()}</h2>
               <span
                 class="icon-[mdi--chevron-down] size-8 not-motion-reduce:transition-transform data-[expanded=true]:rotate-180"
                 data-expanded={step2Expanded}
@@ -428,7 +428,7 @@
               <!-- Encoding Selection -->
               <fieldset class="fieldset group-data-[expanded=false]:hidden">
                 <legend class="fieldset-legend text-sm"
-                  >{m["step2_encoding_label"]()}</legend
+                  >{m.step2_encoding_label()}</legend
                 >
                 <select
                   name="encoding-select"
@@ -437,34 +437,30 @@
                   onchange={handleConfigChange}
                 >
                   <option value="__PreferOverallDetected"
-                    >{m["step2_encoding_auto_overall"]()}</option
+                    >{m.step2_encoding_auto_overall()}</option
                   >
                   <option value="__EntryDetected"
-                    >{m["step2_encoding_auto_entry"]()}</option
+                    >{m.step2_encoding_auto_entry()}</option
                   >
-                  <option value="UTF-8"
-                    >{m["step2_encoding_force_utf8"]()}</option
-                  >
+                  <option value="UTF-8">{m.step2_encoding_force_utf8()}</option>
                   <option value="Shift_JIS"
-                    >{m["step2_encoding_force_shift_jis"]()}</option
+                    >{m.step2_encoding_force_shift_jis()}</option
                   >
                   <option value="EUC-KR"
-                    >{m["step2_encoding_force_euc_kr"]()}</option
+                    >{m.step2_encoding_force_euc_kr()}</option
                   >
-                  <option value="GBK">{m["step2_encoding_force_gbk"]()}</option>
-                  <option value="Big5"
-                    >{m["step2_encoding_force_big5"]()}</option
-                  >
+                  <option value="GBK">{m.step2_encoding_force_gbk()}</option>
+                  <option value="Big5">{m.step2_encoding_force_big5()}</option>
                 </select>
                 <p class="label">
-                  {m["step2_encoding_force_note"]()}
+                  {m.step2_encoding_force_note()}
                 </p>
               </fieldset>
 
               <!-- Field Selection -->
               <fieldset class="fieldset group-data-[expanded=false]:hidden">
                 <legend class="fieldset-legend text-sm"
-                  >{m["step2_field_selection_label"]()}</legend
+                  >{m.step2_field_selection_label()}</legend
                 >
                 <select
                   name="field-select"
@@ -473,28 +469,28 @@
                   onchange={handleConfigChange}
                 >
                   <option value="CdhUnicodeThenLfhUnicodeThenCdh"
-                    >{m["step2_field_cdh_unicode_lfh_unicode_cdh"]()}</option
+                    >{m.step2_field_cdh_unicode_lfh_unicode_cdh()}</option
                   >
                   <option value="CdhUnicodeThenLfhUnicodeThenLfh"
-                    >{m["step2_field_cdh_unicode_lfh_unicode_lfh"]()}</option
+                    >{m.step2_field_cdh_unicode_lfh_unicode_lfh()}</option
                   >
                   <option value="LfhUnicodeThenCdhUnicodeThenCdh"
-                    >{m["step2_field_lfh_unicode_cdh_unicode_cdh"]()}</option
+                    >{m.step2_field_lfh_unicode_cdh_unicode_cdh()}</option
                   >
                   <option value="LfhUnicodeThenCdhUnicodeThenLfh"
-                    >{m["step2_field_lfh_unicode_cdh_unicode_lfh"]()}</option
+                    >{m.step2_field_lfh_unicode_cdh_unicode_lfh()}</option
                   >
                   <option value="CdhUnicodeThenCdh"
-                    >{m["step2_field_cdh_unicode_cdh"]()}</option
+                    >{m.step2_field_cdh_unicode_cdh()}</option
                   >
                   <option value="LfhUnicodeThenLfh"
-                    >{m["step2_field_lfh_unicode_lfh"]()}</option
+                    >{m.step2_field_lfh_unicode_lfh()}</option
                   >
-                  <option value="CdhOnly">{m["step2_field_cdh_only"]()}</option>
-                  <option value="LfhOnly">{m["step2_field_lfh_only"]()}</option>
+                  <option value="CdhOnly">{m.step2_field_cdh_only()}</option>
+                  <option value="LfhOnly">{m.step2_field_lfh_only()}</option>
                 </select>
                 <p class="label">
-                  {m["step2_field_selection_note"]()}
+                  {m.step2_field_selection_note()}
                 </p>
               </fieldset>
 
@@ -504,7 +500,7 @@
                   <h3
                     class="mb-3 text-lg font-semibold group-data-[expanded=false]:hidden"
                   >
-                    {m["step2_decoded_filenames_title"]()}
+                    {m.step2_decoded_filenames_title()}
                   </h3>
 
                   {#if inspectedArchive.overall_encoding}
@@ -512,7 +508,7 @@
                       <LineMdConfirmCircle class="size-10" />
                       <div>
                         <h3 class="font-bold">
-                          {m["step2_detected_encoding_title"]()}
+                          {m.step2_detected_encoding_title()}
                         </h3>
                         <p class="text-lg font-bold">
                           {inspectedArchive.overall_encoding}
@@ -524,10 +520,10 @@
                       <LineMdAlert class="size-10" />
                       <div>
                         <h3 class="font-bold">
-                          {m["step2_detected_encoding_title"]()}
+                          {m.step2_detected_encoding_title()}
                         </h3>
                         <p class="text-sm">
-                          {m["step2_detected_encoding_none"]()}
+                          {m.step2_detected_encoding_none()}
                         </p>
                       </div>
                     </div>
@@ -539,11 +535,11 @@
                     <table class="table table-zebra table-pin-rows w-full">
                       <thead class="bg-base-200">
                         <tr>
-                          <th>{m["step2_table_filename"]()}</th>
-                          <th>{m["step2_table_detected_encoding"]()}</th>
-                          <th>{m["step2_table_field_type"]()}</th>
+                          <th>{m.step2_table_filename()}</th>
+                          <th>{m.step2_table_detected_encoding()}</th>
+                          <th>{m.step2_table_field_type()}</th>
                           <th class="text-center"
-                            >{m["step2_table_utf8_flag"]()}</th
+                            >{m.step2_table_utf8_flag()}</th
                           >
                         </tr>
                       </thead>
@@ -560,7 +556,7 @@
                                 {entry.filename.decoded.string}
                               {:else}
                                 <span class="italic">
-                                  {m["step2_unable_to_decode"]()}
+                                  {m.step2_unable_to_decode()}
                                 </span>
                               {/if}
                             </td>
@@ -572,7 +568,7 @@
                                 entry.filename.detected_encoding !== "ASCII"}
                             >
                               {entry.filename.decoded?.encoding_used ??
-                                m["step2_table_encoding_na"]()}
+                                m.step2_table_encoding_na()}
                               {#if entry.filename.detected_encoding && entry.filename.detected_encoding !== entry.filename.decoded?.encoding_used}
                                 ({entry.filename.detected_encoding})
                               {/if}
@@ -602,7 +598,7 @@
                   <div class="stats shadow mt-4 w-full bg-base-200">
                     <div class="stat">
                       <div class="stat-title">
-                        {m["step2_stats_total_files"]()}
+                        {m.step2_stats_total_files()}
                       </div>
                       <div class="stat-value">
                         {inspectedArchive.entries.length}
@@ -611,7 +607,7 @@
                     {#if decodeErrorCount > 0}
                       <div class="stat">
                         <div class="stat-title">
-                          {m["step2_stats_decoding_errors"]()}
+                          {m.step2_stats_decoding_errors()}
                         </div>
                         <div class="stat-value text-error">
                           {decodeErrorCount}
@@ -633,7 +629,7 @@
                     bind:checked={forceProceedToStep3}
                   />
                   <span class="peer-checked:text-primary"
-                    >{m["step2_ignore_errors"]()}</span
+                    >{m.step2_ignore_errors()}</span
                   >
                 </label>
               </div>
@@ -650,14 +646,14 @@
               <span
                 class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
                 data-step="3"
-                aria-label={m["step3_alt"]()}
+                aria-label={m.step3_alt()}
               ></span>
-              <h2 class="card-title text-2xl">{m["step3_title"]()}</h2>
+              <h2 class="card-title text-2xl">{m.step3_title()}</h2>
             </div>
 
             <div class="space-y-4">
               <p class="text-base-content/70">
-                {m["step3_description"]()}
+                {m.step3_description()}
               </p>
               <button
                 onclick={handleDownload}
@@ -665,7 +661,7 @@
               >
                 <LineMdDownloadLoop class="size-10 motion-reduce:hidden" />
                 <LineMdDownload class="size-10 not-motion-reduce:hidden" />
-                <span>{m["step3_download_button"]()}</span>
+                <span>{m.step3_download_button()}</span>
               </button>
             </div>
           </div>
@@ -674,9 +670,9 @@
     </div>
     <div>
       <p class="mt-8 text-center text-sm text-base-content/50">
-        {m["footer_privacy_text"]()}
+        {m.footer_privacy_text()}
         <a href="/privacy-policy" class="link link-hover"
-          >{m["footer_privacy_link"]()}</a
+          >{m.footer_privacy_link()}</a
         >
       </p>
     </div>

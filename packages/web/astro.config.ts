@@ -6,13 +6,6 @@ import { defineConfig } from "astro/config";
 // https://astro.build/config
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://bakezip.roundtrip.dev",
-  security: {
-    checkOrigin: false,
-  },
-  server: {
-    host: true,
-    allowedHosts: true
-  },
   i18n: {
     locales: ["en", "ja"],
     defaultLocale: "en",

@@ -60,11 +60,19 @@
   "step3_title": "Convert and Download",
   "step3_description": "Click the button below to download the converted ZIP file with corrected metadata.",
   "step3_download_button": "Download Fixed ZIP File",
-  "step3_placeholder_note": "Note: This feature is not yet implemented. The button is a placeholder for future functionality.",
   "footer_privacy_text": "All processing is done locally in your browser. No files are uploaded.",
   "footer_privacy_link": "Privacy Policy",
   "bytes_unit_b": "B",
   "bytes_unit_kb": "KB",
   "bytes_unit_mb": "MB",
-  "bytes_unit_gb": "GB"
+  "bytes_unit_gb": "GB",
+  "language_selector_label": "Select Language",
+  "language_suggestion_title": "Translate Available",
+  "language_suggestion_text": "Switch to {language}?",
+  "language_suggestion_dismiss": "No",
+  "language_suggestion_accept": "Yes",
+  "theme_selector_label": "Select Theme",
+  "theme_light": "Light",
+  "theme_dark": "Dark",
+  "theme_system": "System"
 }
