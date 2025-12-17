@@ -280,7 +280,7 @@
           </div>
 
           <!-- File Upload Section -->
-          <div class="mb-6">
+          <div class="mb-4">
             <p class="mb-3 text-sm text-base-content/70">
               {m["step1_info"]()}
             </p>
@@ -383,8 +383,9 @@
               </div>
             </div>
           {/if}
+
           {#if shouldStopAtStep1}
-            <div class="mt-4">
+            <div class="mt-2">
               <label class="label">
                 <input
                   name="force-step2"
