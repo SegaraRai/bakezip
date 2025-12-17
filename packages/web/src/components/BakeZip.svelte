@@ -307,7 +307,8 @@
               {m.step1_info()}
             </p>
             <div
-              class="relative flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-base-200 px-3 py-6 not-motion-reduce:transition cursor-wait has-focus-visible:border-primary has-enabled:cursor-pointer has-enabled:hover:border-primary has-enabled:hover:bg-base-300"
+              class="relative flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-base-200 px-3 py-6 not-motion-reduce:transition cursor-wait has-focus-visible:border-primary has-enabled:cursor-pointer has-enabled:hover:border-primary has-enabled:hover:bg-base-300 data-[selected=false]:anim-ripple"
+              data-selected={!!selectedFile}
             >
               <input
                 type="file"
@@ -711,7 +712,7 @@
               </p>
               <button
                 onclick={handleDownload}
-                class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2"
+                class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 enabled:anim-shine"
               >
                 <LineMdDownloadLoop class="size-10 motion-reduce:hidden" />
                 <LineMdDownload class="size-10 not-motion-reduce:hidden" />
