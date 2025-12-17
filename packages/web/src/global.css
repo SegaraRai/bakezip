@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@plugin "@iconify/tailwind4";
+@plugin "daisyui" {
+  themes:
+    winter --default,
+    night 
+}
+
+/* Reduce motion for SVG animations */
+
+@media (prefers-reduced-motion: reduce) {
+  *:has(> animate[attributeName="stroke-dashoffset"][values$=";0"]) {
+    stroke-dashoffset: 0 !important;
+  }
+
+  *:has(> animate[attributeName="fill-opacity"][values$=";1"]) {
+    fill-opacity: 1 !important;
+  }
+
+  [data-animated] {
+    display: none !important;
+  }
+}
+
+@media not (prefers-reduced-motion: reduce) {
+  [data-not-animated] {
+    display: none !important;
+  }
+}

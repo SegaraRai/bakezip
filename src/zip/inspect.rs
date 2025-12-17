@@ -323,7 +323,12 @@ impl InspectedArchive {
             .map(|predetect| {
                 let detected_encoding = detect_encoding(predetect.original_bytes);
 
-                let encoding = if !ignore_utf8_flag && predetect.utf8_flag {
+                let encoding = if (!ignore_utf8_flag && predetect.utf8_flag)
+                    || matches!(
+                        predetect.kind,
+                        InspectedFilenameFieldKind::CdhUnicodePathExtraField
+                            | InspectedFilenameFieldKind::LfhUnicodePathExtraField
+                    ) {
                     Some(EncodingOrAscii::Encoding(UTF_8))
                 } else {
                     match &config.encoding {

@@ -1,0 +1,21 @@
+{
+  "name": "bakezip-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "prettier": "^3.7.4",
+    "prettier-plugin-astro": "^0.14.1",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "prettier-plugin-svelte": "^3.4.0",
+    "prettier-plugin-tailwindcss": "^0.7.2"
+  },
+  "scripts": {
+    "dev": "pnpm -F bakezip-web dev",
+    "build": "paraglide-js compile --project ./project.inlang --outdir ./src\\paraglide && pnpm run build:wasm && pnpm run build:web",
+    "build:wasm": "wasm-pack build --target web --out-dir packages/wasm/dist",
+    "build:web": "pnpm -F bakezip-web build",
+    "check": "pnpm -F bakezip-web check",
+    "preview": "pnpm -F bakezip-web preview"
+  }
+}

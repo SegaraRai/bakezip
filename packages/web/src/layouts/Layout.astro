@@ -1,0 +1,29 @@
+---
+import "../global.css";
+import { createI18n } from "../lib/i18n";
+
+interface Props {
+  locale: string;
+  rootClass?: any;
+  bodyClass?: any;
+  mainClass?: any;
+  title?: string;
+}
+
+const { locale } = Astro.props;
+const m = createI18n(locale);
+---
+
+<!doctype html>
+<html lang={locale} class:list={Astro.props.rootClass}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{Astro.props.title ?? "BakeZip"}</title>
+  </head>
+  <body class:list={Astro.props.bodyClass}>
+    <main class:list={Astro.props.mainClass ?? "contents"}>
+      <slot />
+    </main>
+  </body>
+</html>

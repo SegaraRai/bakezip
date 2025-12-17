@@ -1,6 +1,7 @@
 [build]
 # Default target is the native target
 # target = "x86_64-pc-windows-msvc"
+target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
 # WebAssembly target configuration

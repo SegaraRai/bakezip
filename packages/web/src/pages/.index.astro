@@ -1,0 +1,19 @@
+---
+import BakeZip from "../components/BakeZip.svelte";
+import Layout from "../layouts/Layout.astro";
+
+interface Props {
+  locale: string;
+}
+
+const { locale } = Astro.props;
+---
+
+<Layout
+  locale={locale}
+  rootClass="w-full h-full scroll-smooth"
+  bodyClass="w-full h-full overflow-hidden"
+  mainClass="w-full h-full overflow-auto snap-y snap-mandatory"
+>
+  <BakeZip locale={locale} client:load />
+</Layout>

@@ -1,0 +1,28 @@
+{
+  "name": "bakezip",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/bakezip.js",
+  "types": "dist/bakezip.d.ts",
+  "files": [
+    "dist/bakezip.js",
+    "dist/bakezip.d.ts",
+    "dist/bakezip_bg.js",
+    "dist/bakezip_bg.wasm",
+    "dist/bakezip_bg.wasm.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/bakezip.js",
+      "types": "./dist/bakezip.d.ts"
+    }
+  },
+  "sideEffects": [
+    "./dist/bakezip.js"
+  ],
+  "devDependencies": {},
+  "dependencies": {}
+}
