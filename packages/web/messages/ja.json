@@ -51,7 +51,7 @@
   "step2_table_field_type": "フィールドタイプ",
   "step2_table_utf8_flag": "UTF-8フラグ",
   "step2_table_encoding_na": "N/A",
-  "step2_stats_total_files": "総ファイル数",
+  "step2_stats_total_entries": "総エントリ数",
   "step2_stats_decoding_errors": "デコードエラー",
   "step2_unable_to_decode": "<デコード不可>",
   "step2_unknown_encoding": "不明",

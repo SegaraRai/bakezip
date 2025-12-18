@@ -698,7 +698,7 @@
                   <div class="stats shadow mt-4 w-full bg-base-200">
                     <div class="stat">
                       <div class="stat-title">
-                        {m.step2_stats_total_files()}
+                        {m.step2_stats_total_entries()}
                       </div>
                       <div class="stat-value">
                         {inspectedArchive.entries.length}

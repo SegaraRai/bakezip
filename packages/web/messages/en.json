@@ -51,7 +51,7 @@
   "step2_table_field_type": "Field Type",
   "step2_table_utf8_flag": "UTF-8 Flag",
   "step2_table_encoding_na": "N/A",
-  "step2_stats_total_files": "Total Files",
+  "step2_stats_total_entries": "Total Entries",
   "step2_stats_decoding_errors": "Decoding Errors",
   "step2_unable_to_decode": "<Unable to decode>",
   "step2_unknown_encoding": "Unknown",
