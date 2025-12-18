@@ -444,14 +444,14 @@
               role="alert"
               aria-live="polite"
               data-compatibility={compatibilityCategory.level}
-              class="alert data-[compatibility=ok]:alert-success data-[compatibility=broken]:alert-error data-[compatibility=other]:alert-warning"
+              class="alert data-[compatibility=ok]:alert-success data-[compatibility=broken]:alert-error data-[compatibility=other]:alert-info"
             >
               {#if compatibilityCategory.level === "ok"}
                 <LineMdConfirmCircle class="size-10" />
               {:else if compatibilityCategory.level === "broken"}
                 <LineMdCloseCircle class="size-10" />
               {:else}
-                <LineMdAlert class="size-10" />
+                <LineMdAlertCircle class="size-10" />
               {/if}
               <div>
                 <h3 class="font-bold">{m.compatibility_title()}</h3>
