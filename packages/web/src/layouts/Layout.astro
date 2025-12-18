@@ -41,7 +41,12 @@ const m = createI18n(locale);
     </script>
   </head>
   <body class:list={Astro.props.bodyClass}>
-    <div
+    <a
+      href="#main-content"
+      class="not-focus:sr-only focus:absolute focus:top-4 focus:left-4 focus:z-100 btn btn-primary btn-xl"
+      >{m.skip_to_main_content()}</a
+    >
+    <header
       class="fixed top-0 right-0 px-6 py-4 flex gap-2 justify-end z-50 not-lg:w-full bg-base-300/75 backdrop-blur-sm lg:rounded-bl-md"
     >
       <LanguageSelector
@@ -50,13 +55,13 @@ const m = createI18n(locale);
         pathname={Astro.url.pathname}
       />
       <ThemeSelector client:idle locale={locale} />
-    </div>
+    </header>
     <LanguageSuggestion
       client:idle
       currentLocale={locale}
       pathname={Astro.url.pathname}
     />
-    <main class:list={Astro.props.mainClass ?? "contents"}>
+    <main id="main-content" class:list={Astro.props.mainClass ?? "contents"}>
       <!-- Top Padding For Fixed Header -->
       <div class="w-full h-18 lg:hidden"></div>
       <slot />

@@ -87,7 +87,8 @@
     tabindex="0"
     class="btn btn-ghost btn-circle"
   >
-    <span class="icon-[mdi--theme-light-dark] text-xl"></span>
+    <span aria-hidden="true" class="icon-[mdi--theme-light-dark] text-xl"
+    ></span>
   </div>
   {#if theme}
     <ul
@@ -104,7 +105,7 @@
             class="disabled:font-bold disabled:pointer-events-none"
             onclick={() => setTheme(t)}
           >
-            <span class={icon}></span>
+            <span aria-hidden="true" class={icon}></span>
             {getThemeName(t)}
           </button>
         </li>

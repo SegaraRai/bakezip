@@ -362,18 +362,22 @@
               {m.step1_info()}
             </p>
             <div
-              class="relative flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-base-200 px-3 py-6 not-motion-reduce:transition cursor-wait has-focus-visible:border-primary has-enabled:cursor-pointer has-enabled:hover:border-primary has-enabled:hover:bg-base-300 data-[selected=false]:anim-ripple"
+              class="relative flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-base-200 px-3 py-6 cursor-wait has-focus-visible:border-primary has-enabled:cursor-pointer has-enabled:hover:border-primary has-enabled:hover:bg-base-300 data-[selected=false]:anim-ripple"
               data-selected={!!selectedFile}
             >
               <input
                 type="file"
                 accept=".zip"
                 disabled={!!busy}
+                aria-label={m.step1_file_placeholder()}
                 class="absolute inset-0 cursor-wait enabled:cursor-pointer opacity-0 appearance-none"
                 onchange={handleFileSelect}
               />
               <div class="grid grid-cols-1 place-items-center text-center">
-                <LineMdFolderZip class="text-base-content size-14" />
+                <LineMdFolderZip
+                  aria-hidden="true"
+                  class="text-base-content size-14"
+                />
                 {#if selectedFile}
                   <div class="text-base-content/70 pt-2">
                     {selectedFile.name}
@@ -392,8 +396,12 @@
 
           {#if busy === "parsing"}
             <div role="alert" class="alert alert-info" aria-live="polite">
-              <LineMdLoadingLoop class="size-10 motion-reduce:hidden" />
+              <LineMdLoadingLoop
+                aria-hidden="true"
+                class="size-10 motion-reduce:hidden"
+              />
               <span
+                aria-hidden="true"
                 class="size-10 icon-[mdi--hourglass] not-motion-reduce:hidden"
               ></span>
               <span>{m.step1_processing()}</span>
@@ -403,7 +411,7 @@
           <!-- Error Message -->
           {#if error}
             <div role="alert" aria-live="polite" class="alert alert-error">
-              <LineMdCloseCircle class="size-10" />
+              <LineMdCloseCircle class="size-10" aria-hidden="true" />
               <span>{error}</span>
             </div>
           {/if}
@@ -416,7 +424,7 @@
               class="alert alert-soft alert-warning flex-col items-start"
             >
               <div class="flex items-center gap-2">
-                <LineMdAlert class="size-10" />
+                <LineMdAlert class="size-10" aria-hidden="true" />
                 <h3 class="font-bold">
                   {m.step1_warnings_title({ count: warnings.length })}
                 </h3>
@@ -447,11 +455,11 @@
               class="alert data-[compatibility=ok]:alert-success data-[compatibility=broken]:alert-error data-[compatibility=other]:alert-info"
             >
               {#if compatibilityCategory.level === "ok"}
-                <LineMdConfirmCircle class="size-10" />
+                <LineMdConfirmCircle aria-hidden="true" class="size-10" />
               {:else if compatibilityCategory.level === "broken"}
-                <LineMdCloseCircle class="size-10" />
+                <LineMdCloseCircle aria-hidden="true" class="size-10" />
               {:else}
-                <LineMdAlertCircle class="size-10" />
+                <LineMdAlertCircle aria-hidden="true" class="size-10" />
               {/if}
               <div>
                 <h3 class="font-bold">{m.compatibility_title()}</h3>
@@ -485,18 +493,20 @@
         <div class="card bg-base-100 shadow-xl">
           <div class="card-body">
             <button
+              aria-expanded={expandStep2}
               class="flex w-full items-center gap-3 text-left"
               onclick={() => {
                 expandStep2 = !expandStep2;
               }}
             >
               <span
+                aria-label={m.step2_alt()}
                 class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
                 data-step="2"
-                aria-label={m.step2_alt()}
               ></span>
               <h2 class="card-title flex-1 text-2xl">{m.step2_title()}</h2>
               <span
+                aria-hidden="true"
                 class="icon-[mdi--chevron-down] size-8 not-motion-reduce:transition-transform data-[expanded=true]:rotate-180"
                 data-expanded={expandStep2}
               ></span>
@@ -583,7 +593,7 @@
 
                   {#if inspectedArchive.overall_encoding}
                     <div class="alert alert-success py-2">
-                      <LineMdConfirmCircle class="size-10" />
+                      <LineMdConfirmCircle aria-hidden="true" class="size-10" />
                       <div>
                         <h3 class="font-bold">
                           {m.step2_detected_encoding_title()}
@@ -595,7 +605,7 @@
                     </div>
                   {:else}
                     <div class="alert alert-warning py-2">
-                      <LineMdAlert class="size-10" />
+                      <LineMdAlert aria-hidden="true" class="size-10" />
                       <div>
                         <h3 class="font-bold">
                           {m.step2_detected_encoding_title()}
@@ -613,11 +623,13 @@
                     <table class="table table-zebra table-pin-rows w-full">
                       <thead class="bg-base-200">
                         <tr>
-                          <th></th>
-                          <th>{m.step2_table_filename()}</th>
-                          <th>{m.step2_table_detected_encoding()}</th>
-                          <th>{m.step2_table_field_type()}</th>
-                          <th class="text-center"
+                          <th scope="col"></th>
+                          <th scope="col">{m.step2_table_filename()}</th>
+                          <th scope="col"
+                            >{m.step2_table_detected_encoding()}</th
+                          >
+                          <th scope="col">{m.step2_table_field_type()}</th>
+                          <th scope="col" class="text-center"
                             >{m.step2_table_utf8_flag()}</th
                           >
                         </tr>
@@ -646,7 +658,10 @@
                               class="w-8"
                               title={entry.filename.decoded?.string}
                             >
-                              <span class="grid place-items-center">
+                              <span
+                                aria-hidden="true"
+                                class="grid place-items-center"
+                              >
                                 <span
                                   class="text-lg group-data-[type=directory]:group-data-[category=default]:icon-[mdi--folder] group-data-[type=file]:group-data-[category=default]:icon-[mdi--file] group-data-[type=directory]:group-data-[category=metadata]:icon-[mdi--folder-cog] group-data-[type=file]:group-data-[category=metadata]:icon-[mdi--file-cog] group-data-[type=directory]:group-data-[category=alert]:icon-[mdi--folder-alert] group-data-[type=file]:group-data-[category=error]:icon-[mdi--file-alert]"
                                 ></span>
@@ -679,10 +694,13 @@
                             <td class="w-30 text-center">
                               <span class="grid place-items-center">
                                 {#if entry.filename.utf8_flag}
-                                  <span class="icon-[mdi--check] text-success"
+                                  <span
+                                    aria-label={m.step2_table_utf8_flag_yes()}
+                                    class="icon-[mdi--check] text-success"
                                   ></span>
                                 {:else}
                                   <span
+                                    aria-label={m.step2_table_utf8_flag_no()}
                                     class="icon-[mdi--minus] text-base-content/30"
                                   ></span>
                                 {/if}
@@ -755,7 +773,7 @@
               {#if hasOSMetadataFiles}
                 <div class="space-y-2">
                   <div role="alert" aria-live="polite" class="alert alert-info">
-                    <LineMdAlertCircle class="size-10" />
+                    <LineMdAlertCircle aria-hidden="true" class="size-10" />
                     <div>
                       <h3 class="font-bold">
                         {m.step3_os_metadata_detected_title()}
@@ -787,10 +805,16 @@
                 class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 enabled:data-[downloaded=false]:anim-shine"
               >
                 {#if downloaded || !downloadURL}
-                  <LineMdDownload class="size-10" />
+                  <LineMdDownload aria-hidden="true" class="size-10" />
                 {:else}
-                  <LineMdDownloadLoop class="size-10 motion-reduce:hidden" />
-                  <LineMdDownload class="size-10 not-motion-reduce:hidden" />
+                  <LineMdDownloadLoop
+                    aria-hidden="true"
+                    class="size-10 motion-reduce:hidden"
+                  />
+                  <LineMdDownload
+                    aria-hidden="true"
+                    class="size-10 not-motion-reduce:hidden"
+                  />
                 {/if}
                 <span>{m.step3_download_button()}</span>
               </button>

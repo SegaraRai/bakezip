@@ -54,8 +54,8 @@
 
 {#if show && suggestedLocale}
   <div class="toast toast-bottom toast-center z-50">
-    <div class="alert alert-info shadow-lg">
-      <span class="icon-[mdi--translate] text-2xl"></span>
+    <div role="alert" aria-live="assertive" class="alert alert-info shadow-lg">
+      <span aria-hidden="true" class="icon-[mdi--translate] text-2xl"></span>
       <div>
         <h3 class="font-bold">{m.language_suggestion_title()}</h3>
         <div class="text-xs">

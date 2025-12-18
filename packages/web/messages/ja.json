@@ -1,5 +1,6 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "skip_to_main_content": "メインコンテンツにスキップ",
   "header_title": "BakeZip",
   "header_tagline": "ブラウザでZIPの文字化けを修復",
   "header_description": "ZIPファイルを配布する前や、ZIPファイルが正常に解凍できない場合にご利用ください。",
@@ -51,6 +52,8 @@
   "step2_table_field_type": "フィールドタイプ",
   "step2_table_utf8_flag": "UTF-8フラグ",
   "step2_table_encoding_na": "N/A",
+  "step2_table_utf8_flag_yes": "あり",
+  "step2_table_utf8_flag_no": "なし",
   "step2_stats_total_entries": "総エントリ数",
   "step2_stats_decoding_errors": "デコードエラー",
   "step2_unable_to_decode": "<デコード不可>",

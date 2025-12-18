@@ -26,8 +26,12 @@
     tabindex="0"
     class="btn btn-ghost btn-sm m-1"
   >
-    <span class="icon-[mdi--translate] text-xl"></span>
-    <span class="hidden sm:inline">{localeName}</span>
+    <span aria-hidden="true" class="icon-[mdi--translate] text-xl"></span>
+    <span
+      aria-hidden="true"
+      class="hidden sm:inline before:content-[attr(data-locale)]"
+      data-locale={localeName}
+    ></span>
   </div>
   <ul
     tabindex="-1"
