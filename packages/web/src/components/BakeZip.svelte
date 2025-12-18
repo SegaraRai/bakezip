@@ -2,7 +2,6 @@
   import init, {
     ZipProcessor,
     type InspectedArchive,
-    type InspectConfig,
     type ZipWarning,
     type CompatibilityLevel,
     type FieldSelectionStrategy,
@@ -22,26 +21,62 @@
   const m = $derived.by(() => createI18n(locale));
 
   let selectedFile = $state<File | null>(null);
-  let inspectedArchive = $state<InspectedArchive | null>(null);
   let processor = $state<ZipProcessor | null>(null);
-  let warnings = $state<readonly ZipWarning[]>([]);
-  let compatibility = $state<CompatibilityLevel | null>(null);
-  let processing = $state(false);
+  let inspectedArchive = $state<InspectedArchive | null>(null);
+
+  let busy = $state<"parsing" | "inspecting" | "crafting" | false>(false);
   let error = $state("");
 
-  // Options
+  const compatibility = $derived.by(
+    (): CompatibilityLevel | null => processor?.compatibility ?? null,
+  );
+  const warnings = $derived.by(
+    (): ZipWarning[] => processor?.get_warnings() ?? [],
+  );
+
+  // Options for Step2
   let encoding = $state("__PreferOverallDetected");
   let fieldSelection = $state<FieldSelectionStrategy>(
     "CdhUnicodeThenLfhUnicodeThenCdh",
   );
-  let removeOSMetadataFiles = $state(false);
   let forceProceedToStep2 = $state(false);
+  let expandStep2 = $state(false);
+
+  // Options for Step3
+  let removeOSMetadataFiles = $state(false);
   let forceProceedToStep3 = $state(false);
 
-  // Step visibility control
-  let step1Complete = $state(false);
-  let step2Expanded = $state(false);
-  let showStep3 = $state(false);
+  // Download states
+  let downloaded = $state(false);
+  let downloadFile = $state<File | null>(null);
+
+  let _downloadURL = $state<string | null>(null);
+  const downloadURL = $derived.by(() => _downloadURL);
+
+  $effect(() => {
+    if (!downloadFile) {
+      _downloadURL = null;
+      downloaded = false;
+      return;
+    }
+
+    const url = URL.createObjectURL(downloadFile);
+    _downloadURL = url;
+    downloaded = false;
+
+    return () => {
+      URL.revokeObjectURL(url);
+      downloaded = false;
+    };
+  });
+
+  const step1Complete = $derived.by(() => {
+    return processor != null && compatibility != null;
+  });
+
+  const step2Complete = $derived.by(() => {
+    return step1Complete && inspectedArchive != null;
+  });
 
   const compatibilityCategory = $derived.by(() => {
     switch (compatibility?.type) {
@@ -102,11 +137,11 @@
     );
   });
 
-  const shouldStopAtStep1 = $derived.by(
+  const shouldPauseAtStep1 = $derived.by(
     () => compatibilityCategory.level === "ok",
   );
 
-  const shouldStopAtStep2 = $derived.by(() => decodeErrorCount > 0);
+  const shouldPauseAtStep2 = $derived.by(() => decodeErrorCount > 0);
 
   const formatBytes = $derived.by(() => {
     const K = 1024;
@@ -141,7 +176,9 @@
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
 
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     selectedFile = file;
     error = "";
@@ -150,30 +187,49 @@
     await processZip();
   }
 
+  function waitUITick(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  function resetStates(step: 1 | 2 | 3): void {
+    error = "";
+
+    if (step <= 1) {
+      processor = null;
+      forceProceedToStep2 = false;
+    }
+
+    if (step <= 2) {
+      inspectedArchive = null;
+      expandStep2 = false;
+      forceProceedToStep3 = false;
+      encoding = "__PreferOverallDetected";
+      fieldSelection = "CdhUnicodeThenLfhUnicodeThenCdh";
+    }
+
+    if (step <= 3) {
+      removeOSMetadataFiles = false;
+      downloaded = false;
+      downloadFile = null;
+    }
+  }
+
   async function processZip() {
     if (!selectedFile) {
       error = m.step1_error_no_file();
       return;
     }
 
-    processing = true;
-    error = "";
-    step1Complete = false;
-    step2Expanded = false;
-    showStep3 = false;
-    compatibility = null;
-    forceProceedToStep2 = false;
-    forceProceedToStep3 = false;
-    removeOSMetadataFiles = false;
+    resetStates(1);
+    busy = "parsing";
+    await waitUITick();
 
     try {
       await init();
 
-      const ts = performance.now();
-
       // Parse the ZIP file
-      processor = await ZipProcessor.parse(selectedFile);
-
+      const ts = performance.now();
+      const result = await ZipProcessor.parse(selectedFile);
       const elapsed = performance.now() - ts;
       console.info(`Parsed ${selectedFile.name} in ${elapsed} ms`);
 
@@ -184,28 +240,59 @@
         );
       }
 
-      // Get warnings and compatibility
-      warnings = processor.get_warnings();
-      compatibility = processor.compatibility;
+      processor = result;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      processor = null;
+    } finally {
+      busy = false;
+    }
 
-      step1Complete = true;
+    if (processor) {
+      await inspectArchive();
+    }
+  }
 
-      // Inspect with configuration
-      const ts2 = performance.now();
-      await runInspection();
-      const elapsed2 = performance.now() - ts2;
-      console.info(`Inspected ${selectedFile.name} in ${elapsed2} ms`);
+  async function inspectArchive(): Promise<void> {
+    if (!processor) {
+      return;
+    }
 
-      // Determine if Step 2 should be expanded
-      updateStepVisibility();
+    const isNew = inspectedArchive == null;
+
+    if (isNew) {
+      resetStates(2);
+    }
+    busy = "inspecting";
+    await waitUITick();
+
+    try {
+      const ts = performance.now();
+      const result = processor.inspect({
+        encoding: getEncodingStrategy(encoding),
+        field_selection_strategy: fieldSelection,
+        ignore_crc32_mismatch: false,
+        needs_original_bytes: false,
+      });
+      const elapsed = performance.now() - ts;
+      console.info(`Inspected archive in ${elapsed} ms`);
+
+      forceProceedToStep3 = false;
+
+      if (isNew) {
+        expandStep2 =
+          result.overall_encoding == null ||
+          result.entries.some(
+            (entry) => entry.filename.decoded?.has_errors !== false,
+          );
+      }
+
+      inspectedArchive = result;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
       inspectedArchive = null;
-      warnings = [];
-      compatibility = null;
-      processor = null;
     } finally {
-      processing = false;
+      busy = false;
     }
   }
 
@@ -233,41 +320,9 @@
     }
   }
 
-  async function runInspection() {
-    if (!processor) return;
-
-    const config: InspectConfig = {
-      encoding: getEncodingStrategy(encoding),
-      field_selection_strategy: fieldSelection,
-      ignore_crc32_mismatch: false,
-      needs_original_bytes: false,
-    };
-
-    forceProceedToStep3 = false;
-    inspectedArchive = processor.inspect(config);
-  }
-
-  function updateStepVisibility() {
-    if (!inspectedArchive) return;
-
-    // Check if encoding detection was successful
-    const hasOverallEncoding = !!inspectedArchive.overall_encoding;
-
-    // Step 2: Expand if there's a detection issue, collapse if successful
-    step2Expanded = !hasOverallEncoding;
-
-    // Step 3: Show if we have results
-    showStep3 = step1Complete;
-  }
-
-  // Handle config changes - re-run inspection interactively
-  async function handleConfigChange() {
-    if (processor) {
-      await runInspection();
-    }
-  }
-
   function handleDownload() {
+    downloaded = true;
+
     alert("Not Implemented Yet"); // TODO
   }
 </script>
@@ -313,7 +368,7 @@
               <input
                 type="file"
                 accept=".zip"
-                disabled={processing}
+                disabled={!!busy}
                 class="absolute inset-0 cursor-wait enabled:cursor-pointer opacity-0 appearance-none"
                 onchange={handleFileSelect}
               />
@@ -335,7 +390,7 @@
             </div>
           </div>
 
-          {#if processing}
+          {#if busy === "parsing"}
             <div role="alert" class="alert alert-info" aria-live="polite">
               <LineMdLoadingLoop class="size-10 motion-reduce:hidden" />
               <span
@@ -407,7 +462,7 @@
             </div>
           {/if}
 
-          {#if shouldStopAtStep1}
+          {#if shouldPauseAtStep1}
             <div class="mt-2">
               <label class="label">
                 <input
@@ -426,13 +481,13 @@
       </div>
 
       <!-- Step 2: Configuration (Optional, if needed) -->
-      {#if step1Complete && (!shouldStopAtStep1 || forceProceedToStep2)}
+      {#if step1Complete && (!shouldPauseAtStep1 || forceProceedToStep2)}
         <div class="card bg-base-100 shadow-xl">
           <div class="card-body">
             <button
               class="flex w-full items-center gap-3 text-left"
               onclick={() => {
-                step2Expanded = !step2Expanded;
+                expandStep2 = !expandStep2;
               }}
             >
               <span
@@ -443,11 +498,11 @@
               <h2 class="card-title flex-1 text-2xl">{m.step2_title()}</h2>
               <span
                 class="icon-[mdi--chevron-down] size-8 not-motion-reduce:transition-transform data-[expanded=true]:rotate-180"
-                data-expanded={step2Expanded}
+                data-expanded={expandStep2}
               ></span>
             </button>
 
-            <div class="group space-y-6 pt-4" data-expanded={step2Expanded}>
+            <div class="group space-y-6 pt-4" data-expanded={expandStep2}>
               <!-- Encoding Selection -->
               <fieldset class="fieldset group-data-[expanded=false]:hidden">
                 <legend class="fieldset-legend text-sm"
@@ -457,7 +512,7 @@
                   name="encoding-select"
                   class="select w-full"
                   bind:value={encoding}
-                  onchange={handleConfigChange}
+                  onchange={inspectArchive}
                 >
                   <option value="__PreferOverallDetected"
                     >{m.step2_encoding_auto_overall()}</option
@@ -489,7 +544,7 @@
                   name="field-select"
                   class="select w-full"
                   bind:value={fieldSelection}
-                  onchange={handleConfigChange}
+                  onchange={inspectArchive}
                 >
                   <option value="CdhUnicodeThenLfhUnicodeThenCdh"
                     >{m.step2_field_cdh_unicode_lfh_unicode_cdh()}</option
@@ -558,6 +613,7 @@
                     <table class="table table-zebra table-pin-rows w-full">
                       <thead class="bg-base-200">
                         <tr>
+                          <th></th>
                           <th>{m.step2_table_filename()}</th>
                           <th>{m.step2_table_detected_encoding()}</th>
                           <th>{m.step2_table_field_type()}</th>
@@ -568,17 +624,36 @@
                       </thead>
                       <tbody>
                         {#each inspectedArchive.entries as entry}
-                          <tr>
+                          <tr
+                            class="group"
+                            data-category={entry.filename.decoded
+                              ?.has_errors !== false
+                              ? "error"
+                              : isOSMetadataFile(entry.filename.decoded.string)
+                                ? "metadata"
+                                : "default"}
+                            data-type={entry.filename.decoded?.string.endsWith(
+                              "/",
+                            )
+                              ? "directory"
+                              : "file"}
+                            data-encoding-mismatch={entry.filename.decoded
+                              ?.encoding_used !==
+                              entry.filename.detected_encoding &&
+                              entry.filename.detected_encoding !== "ASCII"}
+                          >
                             <td
-                              class="min-w-40 truncate data-[status=error]:text-error data-[status=metadata]:text-info"
-                              data-status={entry.filename.decoded
-                                ?.has_errors !== false
-                                ? "error"
-                                : isOSMetadataFile(
-                                      entry.filename.decoded.string,
-                                    )
-                                  ? "metadata"
-                                  : "none"}
+                              class="w-8"
+                              title={entry.filename.decoded?.string}
+                            >
+                              <span class="grid place-items-center">
+                                <span
+                                  class="text-lg group-data-[type=directory]:group-data-[category=default]:icon-[mdi--folder] group-data-[type=file]:group-data-[category=default]:icon-[mdi--file] group-data-[type=directory]:group-data-[category=metadata]:icon-[mdi--folder-cog] group-data-[type=file]:group-data-[category=metadata]:icon-[mdi--file-cog] group-data-[type=directory]:group-data-[category=alert]:icon-[mdi--folder-alert] group-data-[type=file]:group-data-[category=error]:icon-[mdi--file-alert]"
+                                ></span>
+                              </span>
+                            </td>
+                            <td
+                              class="min-w-40 truncate group-data-[category=error]:text-error group-data-[category=metadata]:text-info"
                               title={entry.filename.decoded?.string}
                             >
                               {#if entry.filename.decoded}
@@ -590,11 +665,7 @@
                               {/if}
                             </td>
                             <td
-                              class="w-50 data-[warning=true]:text-warning"
-                              data-warning={entry.filename.decoded
-                                ?.encoding_used !==
-                                entry.filename.detected_encoding &&
-                                entry.filename.detected_encoding !== "ASCII"}
+                              class="w-50 group-data-[encoding-mismatch=true]:text-warning"
                             >
                               {entry.filename.decoded?.encoding_used ??
                                 m.step2_table_encoding_na()}
@@ -648,7 +719,7 @@
               {/if}
             </div>
 
-            {#if shouldStopAtStep2}
+            {#if shouldPauseAtStep2}
               <div class="mt-4">
                 <label class="label">
                   <input
@@ -668,7 +739,7 @@
       {/if}
 
       <!-- Step 3: Convert and Download -->
-      {#if showStep3 && (!shouldStopAtStep1 || forceProceedToStep2) && (!shouldStopAtStep2 || forceProceedToStep3)}
+      {#if step2Complete && (!shouldPauseAtStep1 || forceProceedToStep2) && (!shouldPauseAtStep2 || forceProceedToStep3)}
         <div class="card bg-base-100 shadow-xl">
           <div class="card-body">
             <div class="mb-4 flex items-center gap-3">
@@ -712,10 +783,15 @@
               </p>
               <button
                 onclick={handleDownload}
-                class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 enabled:anim-shine"
+                data-downloaded={downloaded}
+                class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 enabled:data-[downloaded=false]:anim-shine"
               >
-                <LineMdDownloadLoop class="size-10 motion-reduce:hidden" />
-                <LineMdDownload class="size-10 not-motion-reduce:hidden" />
+                {#if downloaded || !downloadURL}
+                  <LineMdDownload class="size-10" />
+                {:else}
+                  <LineMdDownloadLoop class="size-10 motion-reduce:hidden" />
+                  <LineMdDownload class="size-10 not-motion-reduce:hidden" />
+                {/if}
                 <span>{m.step3_download_button()}</span>
               </button>
             </div>
