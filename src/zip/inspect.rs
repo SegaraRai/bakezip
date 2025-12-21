@@ -242,7 +242,7 @@ impl InspectedArchive {
                         }
                         InspectedFilenameFieldKind::CdhUnicodePathExtraField => {
                             if let Some(up) = &entry.cdh.unicode_path
-                                && (config.ignore_crc32_mismatch || !up.crc32_matched)
+                                && (config.ignore_crc32_mismatch || up.crc32_matched)
                             {
                                 return FieldSelectedFileEntry {
                                     kind,
@@ -253,7 +253,7 @@ impl InspectedArchive {
                         }
                         InspectedFilenameFieldKind::LfhUnicodePathExtraField => {
                             if let Some(up) = &entry.lfh.unicode_path
-                                && (config.ignore_crc32_mismatch || !up.crc32_matched)
+                                && (config.ignore_crc32_mismatch || up.crc32_matched)
                             {
                                 return FieldSelectedFileEntry {
                                     kind,
@@ -466,4 +466,217 @@ impl EncodingOrAscii {
 pub enum ZipInspectError {
     #[error("Encoding '{0}' not found")]
     EncodingNotFound(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zip::parse::{
+        CentralDirectoryHeader, EndOfCentralDirectory, GeneralPurposeBitFlag, LocalFileHeader,
+        UnicodePathExtraField, ZipFile, ZipFileEntry,
+    };
+
+    fn create_mock_entry(
+        filename: &[u8],
+        utf8_flag: bool,
+        unicode_path: Option<UnicodePathExtraField>,
+    ) -> ZipFileEntry {
+        let flags = GeneralPurposeBitFlag(if utf8_flag { 0x0800 } else { 0 });
+        let cdh = CentralDirectoryHeader {
+            signature: 0x02014b50,
+            version_made_by: 0,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            file_comment_length: 0,
+            disk_number_start: 0,
+            internal_file_attributes: 0,
+            external_file_attributes: 0,
+            local_header_offset: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            file_comment: vec![],
+            zip64: None,
+            unicode_path: unicode_path.clone(),
+        };
+        let lfh = LocalFileHeader {
+            signature: 0x04034b50,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            zip64: None,
+            unicode_path,
+        };
+
+        ZipFileEntry {
+            cdh,
+            lfh,
+            descriptor: None,
+            file_offset: 0,
+            file_size: 0,
+        }
+    }
+
+    fn create_mock_zip(entries: Vec<ZipFileEntry>) -> ZipFile {
+        ZipFile {
+            size: 0,
+            eocd: EndOfCentralDirectory {
+                signature: 0x06054b50,
+                disk_number: 0,
+                disk_number_with_eocd: 0,
+                entries_on_disk: entries.len() as u16,
+                total_entries: entries.len() as u16,
+                central_directory_size: 0,
+                central_directory_offset: 0,
+                comment_length: 0,
+                comment: vec![],
+            },
+            zip64_eocd: None,
+            entries,
+        }
+    }
+
+    #[test]
+    fn test_inspect_empty_zip() {
+        let zip = create_mock_zip(vec![]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = InspectedArchive::inspect(&zip, &config);
+        assert!(result.is_ok());
+        let inspected = result.unwrap();
+        assert_eq!(inspected.entries.len(), 0);
+    }
+
+    #[test]
+    fn test_inspect_utf8_entry() {
+        let entry = create_mock_entry("test.txt".as_bytes(), true, None);
+        let zip = create_mock_zip(vec![entry]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = InspectedArchive::inspect(&zip, &config);
+        assert!(result.is_ok());
+        let inspected = result.unwrap();
+        assert_eq!(inspected.entries.len(), 1);
+        let filename = &inspected.entries[0].filename;
+        assert!(filename.utf8_flag);
+        assert_eq!(filename.decoded.as_ref().unwrap().string, "test.txt");
+        assert_eq!(filename.decoded.as_ref().unwrap().encoding_used, "UTF-8");
+    }
+
+    #[test]
+    fn test_inspect_sjis_entry() {
+        // "テスト.txt" in Shift-JIS
+        let sjis_bytes = b"\x83\x65\x83\x58\x83\x67.txt";
+        let entry = create_mock_entry(sjis_bytes, false, None);
+        let zip = create_mock_zip(vec![entry]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: Some("Shift_JIS".to_string()),
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = InspectedArchive::inspect(&zip, &config);
+        assert!(result.is_ok());
+        let inspected = result.unwrap();
+        assert_eq!(inspected.entries.len(), 1);
+        let filename = &inspected.entries[0].filename;
+        assert!(!filename.utf8_flag);
+        assert_eq!(filename.decoded.as_ref().unwrap().string, "テスト.txt");
+        assert_eq!(
+            filename.decoded.as_ref().unwrap().encoding_used,
+            "Shift_JIS"
+        );
+    }
+
+    #[test]
+    fn test_inspect_unicode_path_extra_field() {
+        let unicode_path = UnicodePathExtraField {
+            version: 1,
+            name_crc32: 0,
+            data: "unicode.txt".as_bytes().to_vec(),
+            decoded_string: Some("unicode.txt".to_string()),
+            crc32_matched: true,
+        };
+        let entry = create_mock_entry(b"ascii.txt", false, Some(unicode_path));
+        let zip = create_mock_zip(vec![entry]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::CdhUnicodeThenCdh,
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = InspectedArchive::inspect(&zip, &config);
+        assert!(result.is_ok());
+        let inspected = result.unwrap();
+        assert_eq!(inspected.entries.len(), 1);
+        let filename = &inspected.entries[0].filename;
+        assert_eq!(
+            filename.kind,
+            InspectedFilenameFieldKind::CdhUnicodePathExtraField
+        );
+        assert_eq!(filename.decoded.as_ref().unwrap().string, "unicode.txt");
+    }
+
+    #[test]
+    fn test_inspect_force_encoding() {
+        // "テスト.txt" in Shift-JIS
+        let sjis_bytes = b"\x83\x65\x83\x58\x83\x67.txt";
+        let entry = create_mock_entry(sjis_bytes, false, None);
+        let zip = create_mock_zip(vec![entry]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::ForceSpecified {
+                encoding: "Shift_JIS".to_string(),
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = InspectedArchive::inspect(&zip, &config);
+        assert!(result.is_ok());
+        let inspected = result.unwrap();
+        assert_eq!(inspected.entries.len(), 1);
+        let filename = &inspected.entries[0].filename;
+        assert_eq!(filename.decoded.as_ref().unwrap().string, "テスト.txt");
+        assert_eq!(
+            filename.decoded.as_ref().unwrap().encoding_used,
+            "Shift_JIS"
+        );
+    }
 }

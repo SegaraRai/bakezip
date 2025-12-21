@@ -178,3 +178,180 @@ impl CompatibilityLevel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zip::parse::{
+        CentralDirectoryHeader, EndOfCentralDirectory, GeneralPurposeBitFlag, LocalFileHeader,
+        UnicodePathExtraField, ZipFileEntry,
+    };
+
+    fn create_mock_entry(
+        filename: &[u8],
+        utf8_flag: bool,
+        unicode_path: Option<UnicodePathExtraField>,
+    ) -> ZipFileEntry {
+        let flags = GeneralPurposeBitFlag(if utf8_flag { 0x0800 } else { 0 });
+        let cdh = CentralDirectoryHeader {
+            signature: 0x02014b50,
+            version_made_by: 0,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            file_comment_length: 0,
+            disk_number_start: 0,
+            internal_file_attributes: 0,
+            external_file_attributes: 0,
+            local_header_offset: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            file_comment: vec![],
+            zip64: None,
+            unicode_path: unicode_path.clone(),
+        };
+        let lfh = LocalFileHeader {
+            signature: 0x04034b50,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            zip64: None,
+            unicode_path,
+        };
+
+        ZipFileEntry {
+            cdh,
+            lfh,
+            descriptor: None,
+            file_offset: 0,
+            file_size: 0,
+        }
+    }
+
+    fn create_mock_zip(entries: Vec<ZipFileEntry>) -> ZipFile {
+        ZipFile {
+            size: 0,
+            eocd: EndOfCentralDirectory {
+                signature: 0x06054b50,
+                disk_number: 0,
+                disk_number_with_eocd: 0,
+                entries_on_disk: entries.len() as u16,
+                total_entries: entries.len() as u16,
+                central_directory_size: 0,
+                central_directory_offset: 0,
+                comment_length: 0,
+                comment: vec![],
+            },
+            zip64_eocd: None,
+            entries,
+        }
+    }
+
+    #[test]
+    fn test_compatibility_ascii_only() {
+        let entry = create_mock_entry(b"test.txt", false, None);
+        let zip = create_mock_zip(vec![entry]);
+        let compatibility = CompatibilityLevel::analyze(&zip);
+
+        match compatibility {
+            CompatibilityLevel::AsciiOnly {
+                with_utf8_flags,
+                with_unicode_path_fields,
+            } => {
+                assert_eq!(with_utf8_flags, Prevalence::None);
+                assert_eq!(with_unicode_path_fields, Prevalence::None);
+            }
+            _ => panic!("Expected AsciiOnly, got {:?}", compatibility),
+        }
+    }
+
+    #[test]
+    fn test_compatibility_utf8_only() {
+        let entry = create_mock_entry("テスト.txt".as_bytes(), true, None);
+        let zip = create_mock_zip(vec![entry]);
+        let compatibility = CompatibilityLevel::analyze(&zip);
+
+        match compatibility {
+            CompatibilityLevel::Utf8Only {
+                with_utf8_flags,
+                with_unicode_path_fields,
+            } => {
+                assert_eq!(with_utf8_flags, Prevalence::Always);
+                assert_eq!(with_unicode_path_fields, Prevalence::None);
+            }
+            _ => panic!("Expected Utf8Only, got {:?}", compatibility),
+        }
+    }
+
+    #[test]
+    fn test_compatibility_broken() {
+        // Invalid UTF-8 with UTF-8 flag set
+        let entry = create_mock_entry(b"\x80\x81", true, None);
+        let zip = create_mock_zip(vec![entry]);
+        let compatibility = CompatibilityLevel::analyze(&zip);
+
+        match compatibility {
+            CompatibilityLevel::Broken => {}
+            _ => panic!("Expected Broken, got {:?}", compatibility),
+        }
+    }
+
+    #[test]
+    fn test_compatibility_other() {
+        // Non-UTF-8 without UTF-8 flag (e.g. Shift-JIS)
+        // "テスト" in Shift-JIS is 83 65 83 58 83 67
+        let entry = create_mock_entry(b"\x83\x65\x83\x58\x83\x67.txt", false, None);
+        let zip = create_mock_zip(vec![entry]);
+        let compatibility = CompatibilityLevel::analyze(&zip);
+
+        match compatibility {
+            CompatibilityLevel::Other {
+                with_unicode_path_fields,
+            } => {
+                assert_eq!(with_unicode_path_fields, Prevalence::None);
+            }
+            _ => panic!("Expected Other, got {:?}", compatibility),
+        }
+    }
+
+    #[test]
+    fn test_compatibility_with_unicode_path() {
+        let unicode_path = UnicodePathExtraField {
+            version: 1,
+            name_crc32: 0,
+            data: "テスト.txt".as_bytes().to_vec(),
+            decoded_string: Some("テスト.txt".to_string()),
+            crc32_matched: true,
+        };
+        let entry = create_mock_entry(b"test.txt", false, Some(unicode_path));
+        let zip = create_mock_zip(vec![entry]);
+        let compatibility = CompatibilityLevel::analyze(&zip);
+
+        match compatibility {
+            CompatibilityLevel::AsciiOnly {
+                with_utf8_flags,
+                with_unicode_path_fields,
+            } => {
+                assert_eq!(with_utf8_flags, Prevalence::None);
+                assert_eq!(with_unicode_path_fields, Prevalence::Always);
+            }
+            _ => panic!("Expected AsciiOnly, got {:?}", compatibility),
+        }
+    }
+}

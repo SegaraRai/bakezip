@@ -1,23 +1,15 @@
-use crate::zip::parse::ZipFileEntry;
+use crate::zip::parse::{Zip64EndOfCentralDirectoryHeader, ZipFileEntry};
 
 use super::inspect::{InspectConfig, InspectedArchive, ZipInspectError};
 use super::parse::{
     CentralDirectoryHeader, EndOfCentralDirectory, ExtraField, LocalFileHeader,
-    UnicodePathExtraField, Zip64EndOfCentralDirectory, Zip64EndOfCentralDirectoryLocator,
-    Zip64ExtendedInfo, ZipFile,
+    UnicodePathExtraField, Zip64EndOfCentralDirectoryLocator, Zip64ExtendedInfo, ZipFile,
 };
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::Write;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum RebuildError {
-    #[error("Inspection failed: {0}")]
-    Inspect(#[from] ZipInspectError),
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-}
-
+#[derive(Debug, Clone)]
 pub enum RebuildChunk {
     Reference { offset: u64, size: u64 },
     Binary(Vec<u8>),
@@ -140,7 +132,7 @@ pub fn rebuild(
             unicode_path: None, // Not used for writing
         };
 
-        let lfh_bytes = write_lfh(&lfh)?;
+        let lfh_bytes = lfh.to_bytes()?;
         let lfh_size = lfh_bytes.len() as u64;
         chunks.push(RebuildChunk::Binary(lfh_bytes));
 
@@ -258,7 +250,7 @@ pub fn rebuild(
             unicode_path: None,
         };
 
-        let cdh_bytes = write_cdh(&cdh)?;
+        let cdh_bytes = cdh.to_bytes()?;
         chunks.push(RebuildChunk::Binary(cdh_bytes.clone()));
         current_offset += cdh_bytes.len() as u64;
     }
@@ -271,22 +263,19 @@ pub fn rebuild(
 
     if need_zip64_eocd {
         // Write Zip64 EOCD
-        let zip64_eocd = Zip64EndOfCentralDirectory {
-            header: super::parse::Zip64EndOfCentralDirectoryHeader {
-                signature: 0x06064b50,
-                size_of_record: 44,
-                version_made_by: 63,
-                version_needed: 45,
-                disk_number: 0,
-                disk_number_with_eocd: 0,
-                total_entries_on_disk: total_entries,
-                total_entries,
-                central_directory_size: cd_size,
-                central_directory_offset: cd_start_offset,
-            },
-            extensible_data: None,
+        let zip64_eocd_header = Zip64EndOfCentralDirectoryHeader {
+            signature: 0x06064b50,
+            size_of_record: 44,
+            version_made_by: 63,
+            version_needed: 45,
+            disk_number: 0,
+            disk_number_with_eocd: 0,
+            total_entries_on_disk: total_entries,
+            total_entries,
+            central_directory_size: cd_size,
+            central_directory_offset: cd_start_offset,
         };
-        let zip64_eocd_bytes = write_zip64_eocd(&zip64_eocd)?;
+        let zip64_eocd_bytes = zip64_eocd_header.to_bytes()?;
         chunks.push(RebuildChunk::Binary(zip64_eocd_bytes.clone()));
         let zip64_eocd_offset = current_offset;
         current_offset += zip64_eocd_bytes.len() as u64;
@@ -298,7 +287,7 @@ pub fn rebuild(
             eocd_offset: zip64_eocd_offset,
             total_disks: 1,
         };
-        let zip64_locator_bytes = write_zip64_locator(&zip64_locator)?;
+        let zip64_locator_bytes = zip64_locator.to_bytes()?;
         chunks.push(RebuildChunk::Binary(zip64_locator_bytes));
         current_offset += 20;
     }
@@ -331,7 +320,7 @@ pub fn rebuild(
         comment_length: zip_file.eocd.comment_length,
         comment: zip_file.eocd.comment.clone(),
     };
-    let eocd_bytes = write_eocd(&eocd)?;
+    let eocd_bytes = eocd.to_bytes()?;
     let eocd_size = eocd_bytes.len() as u64;
     chunks.push(RebuildChunk::Binary(eocd_bytes));
     current_offset += eocd_size;
@@ -339,106 +328,279 @@ pub fn rebuild(
     Ok((chunks, current_offset))
 }
 
-fn write_lfh(lfh: &LocalFileHeader) -> io::Result<Vec<u8>> {
-    let mut w = Vec::with_capacity(
-        30 + lfh.filename.len()
-            + lfh
-                .extra_fields
-                .iter()
-                .map(|ef| 4 + ef.size as usize)
-                .sum::<usize>(),
-    );
-    w.write_all(&lfh.signature.to_le_bytes())?;
-    w.write_all(&lfh.version_needed.to_le_bytes())?;
-    w.write_all(&lfh.flags.0.to_le_bytes())?;
-    w.write_all(&lfh.compression_method.to_le_bytes())?;
-    w.write_all(&lfh.last_mod_time.to_le_bytes())?;
-    w.write_all(&lfh.last_mod_date.to_le_bytes())?;
-    w.write_all(&lfh.crc32.to_le_bytes())?;
-    w.write_all(&lfh.compressed_size.to_le_bytes())?;
-    w.write_all(&lfh.uncompressed_size.to_le_bytes())?;
-    w.write_all(&lfh.filename_length.to_le_bytes())?;
-    w.write_all(&lfh.extra_field_length.to_le_bytes())?;
-    w.write_all(&lfh.filename)?;
-    for ef in &lfh.extra_fields {
-        w.write_all(&ef.tag.to_le_bytes())?;
-        w.write_all(&ef.size.to_le_bytes())?;
-        w.write_all(&ef.data)?;
+#[derive(Debug, Error)]
+pub enum RebuildError {
+    #[error("Inspection failed: {0}")]
+    Inspect(#[from] ZipInspectError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+trait ZipSerialize {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>>;
+}
+
+impl ZipSerialize for LocalFileHeader {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut w = Vec::with_capacity(
+            30 + self.filename.len()
+                + self
+                    .extra_fields
+                    .iter()
+                    .map(|ef| 4 + ef.size as usize)
+                    .sum::<usize>(),
+        );
+        w.write_all(&self.signature.to_le_bytes())?;
+        w.write_all(&self.version_needed.to_le_bytes())?;
+        w.write_all(&self.flags.0.to_le_bytes())?;
+        w.write_all(&self.compression_method.to_le_bytes())?;
+        w.write_all(&self.last_mod_time.to_le_bytes())?;
+        w.write_all(&self.last_mod_date.to_le_bytes())?;
+        w.write_all(&self.crc32.to_le_bytes())?;
+        w.write_all(&self.compressed_size.to_le_bytes())?;
+        w.write_all(&self.uncompressed_size.to_le_bytes())?;
+        w.write_all(&self.filename_length.to_le_bytes())?;
+        w.write_all(&self.extra_field_length.to_le_bytes())?;
+        w.write_all(&self.filename)?;
+        for ef in &self.extra_fields {
+            w.write_all(&ef.tag.to_le_bytes())?;
+            w.write_all(&ef.size.to_le_bytes())?;
+            w.write_all(&ef.data)?;
+        }
+        Ok(w)
     }
-    Ok(w)
 }
 
-fn write_cdh(cdh: &CentralDirectoryHeader) -> io::Result<Vec<u8>> {
-    let mut w = Vec::with_capacity(
-        46 + cdh.filename.len()
-            + cdh
-                .extra_fields
-                .iter()
-                .map(|ef| 4 + ef.size as usize)
-                .sum::<usize>()
-            + cdh.file_comment.len(),
-    );
-    w.write_all(&cdh.signature.to_le_bytes())?;
-    w.write_all(&cdh.version_made_by.to_le_bytes())?;
-    w.write_all(&cdh.version_needed.to_le_bytes())?;
-    w.write_all(&cdh.flags.0.to_le_bytes())?;
-    w.write_all(&cdh.compression_method.to_le_bytes())?;
-    w.write_all(&cdh.last_mod_time.to_le_bytes())?;
-    w.write_all(&cdh.last_mod_date.to_le_bytes())?;
-    w.write_all(&cdh.crc32.to_le_bytes())?;
-    w.write_all(&cdh.compressed_size.to_le_bytes())?;
-    w.write_all(&cdh.uncompressed_size.to_le_bytes())?;
-    w.write_all(&cdh.filename_length.to_le_bytes())?;
-    w.write_all(&cdh.extra_field_length.to_le_bytes())?;
-    w.write_all(&cdh.file_comment_length.to_le_bytes())?;
-    w.write_all(&cdh.disk_number_start.to_le_bytes())?;
-    w.write_all(&cdh.internal_file_attributes.to_le_bytes())?;
-    w.write_all(&cdh.external_file_attributes.to_le_bytes())?;
-    w.write_all(&cdh.local_header_offset.to_le_bytes())?;
-    w.write_all(&cdh.filename)?;
-    for ef in &cdh.extra_fields {
-        w.write_all(&ef.tag.to_le_bytes())?;
-        w.write_all(&ef.size.to_le_bytes())?;
-        w.write_all(&ef.data)?;
+impl ZipSerialize for CentralDirectoryHeader {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut w = Vec::with_capacity(
+            46 + self.filename.len()
+                + self
+                    .extra_fields
+                    .iter()
+                    .map(|ef| 4 + ef.size as usize)
+                    .sum::<usize>()
+                + self.file_comment.len(),
+        );
+        w.write_all(&self.signature.to_le_bytes())?;
+        w.write_all(&self.version_made_by.to_le_bytes())?;
+        w.write_all(&self.version_needed.to_le_bytes())?;
+        w.write_all(&self.flags.0.to_le_bytes())?;
+        w.write_all(&self.compression_method.to_le_bytes())?;
+        w.write_all(&self.last_mod_time.to_le_bytes())?;
+        w.write_all(&self.last_mod_date.to_le_bytes())?;
+        w.write_all(&self.crc32.to_le_bytes())?;
+        w.write_all(&self.compressed_size.to_le_bytes())?;
+        w.write_all(&self.uncompressed_size.to_le_bytes())?;
+        w.write_all(&self.filename_length.to_le_bytes())?;
+        w.write_all(&self.extra_field_length.to_le_bytes())?;
+        w.write_all(&self.file_comment_length.to_le_bytes())?;
+        w.write_all(&self.disk_number_start.to_le_bytes())?;
+        w.write_all(&self.internal_file_attributes.to_le_bytes())?;
+        w.write_all(&self.external_file_attributes.to_le_bytes())?;
+        w.write_all(&self.local_header_offset.to_le_bytes())?;
+        w.write_all(&self.filename)?;
+        for ef in &self.extra_fields {
+            w.write_all(&ef.tag.to_le_bytes())?;
+            w.write_all(&ef.size.to_le_bytes())?;
+            w.write_all(&ef.data)?;
+        }
+        w.write_all(&self.file_comment)?;
+        Ok(w)
     }
-    w.write_all(&cdh.file_comment)?;
-    Ok(w)
 }
 
-fn write_zip64_eocd(eocd: &Zip64EndOfCentralDirectory) -> io::Result<Vec<u8>> {
-    let mut w = Vec::with_capacity(56);
-    w.write_all(&eocd.header.signature.to_le_bytes())?;
-    w.write_all(&eocd.header.size_of_record.to_le_bytes())?;
-    w.write_all(&eocd.header.version_made_by.to_le_bytes())?;
-    w.write_all(&eocd.header.version_needed.to_le_bytes())?;
-    w.write_all(&eocd.header.disk_number.to_le_bytes())?;
-    w.write_all(&eocd.header.disk_number_with_eocd.to_le_bytes())?;
-    w.write_all(&eocd.header.total_entries_on_disk.to_le_bytes())?;
-    w.write_all(&eocd.header.total_entries.to_le_bytes())?;
-    w.write_all(&eocd.header.central_directory_size.to_le_bytes())?;
-    w.write_all(&eocd.header.central_directory_offset.to_le_bytes())?;
-    Ok(w)
+impl ZipSerialize for Zip64EndOfCentralDirectoryHeader {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut w = Vec::with_capacity(56);
+        w.write_all(&self.signature.to_le_bytes())?;
+        w.write_all(&self.size_of_record.to_le_bytes())?;
+        w.write_all(&self.version_made_by.to_le_bytes())?;
+        w.write_all(&self.version_needed.to_le_bytes())?;
+        w.write_all(&self.disk_number.to_le_bytes())?;
+        w.write_all(&self.disk_number_with_eocd.to_le_bytes())?;
+        w.write_all(&self.total_entries_on_disk.to_le_bytes())?;
+        w.write_all(&self.total_entries.to_le_bytes())?;
+        w.write_all(&self.central_directory_size.to_le_bytes())?;
+        w.write_all(&self.central_directory_offset.to_le_bytes())?;
+        Ok(w)
+    }
 }
 
-fn write_zip64_locator(locator: &Zip64EndOfCentralDirectoryLocator) -> io::Result<Vec<u8>> {
-    let mut w = Vec::with_capacity(20);
-    w.write_all(&locator.signature.to_le_bytes())?;
-    w.write_all(&locator.disk_with_eocd.to_le_bytes())?;
-    w.write_all(&locator.eocd_offset.to_le_bytes())?;
-    w.write_all(&locator.total_disks.to_le_bytes())?;
-    Ok(w)
+impl ZipSerialize for Zip64EndOfCentralDirectoryLocator {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut w = Vec::with_capacity(20);
+        w.write_all(&self.signature.to_le_bytes())?;
+        w.write_all(&self.disk_with_eocd.to_le_bytes())?;
+        w.write_all(&self.eocd_offset.to_le_bytes())?;
+        w.write_all(&self.total_disks.to_le_bytes())?;
+        Ok(w)
+    }
 }
 
-fn write_eocd(eocd: &EndOfCentralDirectory) -> io::Result<Vec<u8>> {
-    let mut w = Vec::with_capacity(22 + eocd.comment.len());
-    w.write_all(&eocd.signature.to_le_bytes())?;
-    w.write_all(&eocd.disk_number.to_le_bytes())?;
-    w.write_all(&eocd.disk_number_with_eocd.to_le_bytes())?;
-    w.write_all(&eocd.entries_on_disk.to_le_bytes())?;
-    w.write_all(&eocd.total_entries.to_le_bytes())?;
-    w.write_all(&eocd.central_directory_size.to_le_bytes())?;
-    w.write_all(&eocd.central_directory_offset.to_le_bytes())?;
-    w.write_all(&eocd.comment_length.to_le_bytes())?;
-    w.write_all(&eocd.comment)?;
-    Ok(w)
+impl ZipSerialize for EndOfCentralDirectory {
+    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        let mut w = Vec::with_capacity(22 + self.comment.len());
+        w.write_all(&self.signature.to_le_bytes())?;
+        w.write_all(&self.disk_number.to_le_bytes())?;
+        w.write_all(&self.disk_number_with_eocd.to_le_bytes())?;
+        w.write_all(&self.entries_on_disk.to_le_bytes())?;
+        w.write_all(&self.total_entries.to_le_bytes())?;
+        w.write_all(&self.central_directory_size.to_le_bytes())?;
+        w.write_all(&self.central_directory_offset.to_le_bytes())?;
+        w.write_all(&self.comment_length.to_le_bytes())?;
+        w.write_all(&self.comment)?;
+        Ok(w)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zip::inspect::{EncodingSelectionStrategy, FieldSelectionStrategy, InspectConfig};
+    use crate::zip::parse::{
+        CentralDirectoryHeader, EndOfCentralDirectory, GeneralPurposeBitFlag, LocalFileHeader,
+        UnicodePathExtraField, ZipFile, ZipFileEntry,
+    };
+
+    fn create_mock_entry(
+        filename: &[u8],
+        utf8_flag: bool,
+        unicode_path: Option<UnicodePathExtraField>,
+    ) -> ZipFileEntry {
+        let flags = GeneralPurposeBitFlag(if utf8_flag { 0x0800 } else { 0 });
+        let cdh = CentralDirectoryHeader {
+            signature: 0x02014b50,
+            version_made_by: 0,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            file_comment_length: 0,
+            disk_number_start: 0,
+            internal_file_attributes: 0,
+            external_file_attributes: 0,
+            local_header_offset: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            file_comment: vec![],
+            zip64: None,
+            unicode_path: unicode_path.clone(),
+        };
+        let lfh = LocalFileHeader {
+            signature: 0x04034b50,
+            version_needed: 0,
+            flags,
+            compression_method: 0,
+            last_mod_time: 0,
+            last_mod_date: 0,
+            crc32: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            filename_length: filename.len() as u16,
+            extra_field_length: 0,
+            filename: filename.to_vec(),
+            extra_fields: vec![],
+            zip64: None,
+            unicode_path,
+        };
+
+        ZipFileEntry {
+            cdh,
+            lfh,
+            descriptor: None,
+            file_offset: 0,
+            file_size: 0,
+        }
+    }
+
+    fn create_mock_zip(entries: Vec<ZipFileEntry>) -> ZipFile {
+        ZipFile {
+            size: 0,
+            eocd: EndOfCentralDirectory {
+                signature: 0x06054b50,
+                disk_number: 0,
+                disk_number_with_eocd: 0,
+                entries_on_disk: entries.len() as u16,
+                total_entries: entries.len() as u16,
+                central_directory_size: 0,
+                central_directory_offset: 0,
+                comment_length: 0,
+                comment: vec![],
+            },
+            zip64_eocd: None,
+            entries,
+        }
+    }
+
+    #[test]
+    fn test_rebuild_empty_zip() {
+        let zip = create_mock_zip(vec![]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = rebuild(&zip, &config, &[]);
+        assert!(result.is_ok());
+        let (chunks, size) = result.unwrap();
+        // EOCD is 22 bytes
+        assert_eq!(size, 22);
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_rebuild_single_entry() {
+        let entry = create_mock_entry(b"test.txt", true, None);
+        let zip = create_mock_zip(vec![entry]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        let result = rebuild(&zip, &config, &[]);
+        assert!(result.is_ok());
+        let (chunks, size) = result.unwrap();
+        assert!(size > 22);
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_rebuild_omit_entry() {
+        let entry1 = create_mock_entry(b"test1.txt", true, None);
+        let entry2 = create_mock_entry(b"test2.txt", true, None);
+        let zip = create_mock_zip(vec![entry1, entry2]);
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+        };
+        // Omit the first entry (index 0)
+        let result = rebuild(&zip, &config, &[0]);
+        assert!(result.is_ok());
+        let (_chunks, size) = result.unwrap();
+
+        // Should contain only one entry + EOCD
+        // We can't easily check the exact size without calculating it, but we can check if it's smaller than full rebuild
+        let full_result = rebuild(&zip, &config, &[]).unwrap();
+        assert!(size < full_result.1);
+    }
 }

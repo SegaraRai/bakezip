@@ -1612,6 +1612,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_lfh_invalid_signature() {
+        let mut lfh_data = vec![0u8; 30];
+        // Set invalid signature
+        lfh_data[0..4].copy_from_slice(&0x00000000u32.to_le_bytes());
+
+        let result = LocalFileHeader::parse(&lfh_data, Err);
+        assert!(matches!(
+            result,
+            Err(ZipParseError::InvalidSignature { name: "LFH", .. })
+        ));
+    }
+
+    #[test]
     fn test_parse_cdh_valid() {
         let mut cdh_data = vec![0u8; 46];
         // Set signature
@@ -1672,5 +1685,149 @@ mod tests {
         assert!(result.is_ok());
         let fields = result.unwrap();
         assert_eq!(fields.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_parse_zip_file() {
+        let mut data = Vec::new();
+
+        // 1. Local File Header
+        let lfh_offset = data.len() as u32;
+        data.extend_from_slice(&0x04034b50u32.to_le_bytes()); // Signature
+        data.extend_from_slice(&0u16.to_le_bytes()); // Version needed
+        data.extend_from_slice(&0u16.to_le_bytes()); // Flags
+        data.extend_from_slice(&0u16.to_le_bytes()); // Compression method
+        data.extend_from_slice(&0u16.to_le_bytes()); // Last mod time
+        data.extend_from_slice(&0u16.to_le_bytes()); // Last mod date
+        data.extend_from_slice(&0u32.to_le_bytes()); // CRC32
+        data.extend_from_slice(&0u32.to_le_bytes()); // Compressed size
+        data.extend_from_slice(&0u32.to_le_bytes()); // Uncompressed size
+        data.extend_from_slice(&4u16.to_le_bytes()); // Filename length
+        data.extend_from_slice(&0u16.to_le_bytes()); // Extra field length
+        data.extend_from_slice(b"test"); // Filename
+
+        // 2. File Data (Empty)
+
+        // 3. Central Directory Header
+        let cdh_offset = data.len() as u32;
+        data.extend_from_slice(&0x02014b50u32.to_le_bytes()); // Signature
+        data.extend_from_slice(&0u16.to_le_bytes()); // Version made by
+        data.extend_from_slice(&0u16.to_le_bytes()); // Version needed
+        data.extend_from_slice(&0u16.to_le_bytes()); // Flags
+        data.extend_from_slice(&0u16.to_le_bytes()); // Compression method
+        data.extend_from_slice(&0u16.to_le_bytes()); // Last mod time
+        data.extend_from_slice(&0u16.to_le_bytes()); // Last mod date
+        data.extend_from_slice(&0u32.to_le_bytes()); // CRC32
+        data.extend_from_slice(&0u32.to_le_bytes()); // Compressed size
+        data.extend_from_slice(&0u32.to_le_bytes()); // Uncompressed size
+        data.extend_from_slice(&4u16.to_le_bytes()); // Filename length
+        data.extend_from_slice(&0u16.to_le_bytes()); // Extra field length
+        data.extend_from_slice(&0u16.to_le_bytes()); // File comment length
+        data.extend_from_slice(&0u16.to_le_bytes()); // Disk number start
+        data.extend_from_slice(&0u16.to_le_bytes()); // Internal file attributes
+        data.extend_from_slice(&0u32.to_le_bytes()); // External file attributes
+        data.extend_from_slice(&lfh_offset.to_le_bytes()); // Local header offset
+        data.extend_from_slice(b"test"); // Filename
+
+        let cdh_size = (data.len() as u32) - cdh_offset;
+
+        // 4. End of Central Directory
+        data.extend_from_slice(&0x06054b50u32.to_le_bytes()); // Signature
+        data.extend_from_slice(&0u16.to_le_bytes()); // Disk number
+        data.extend_from_slice(&0u16.to_le_bytes()); // Disk number with EOCD
+        data.extend_from_slice(&1u16.to_le_bytes()); // Entries on disk
+        data.extend_from_slice(&1u16.to_le_bytes()); // Total entries
+        data.extend_from_slice(&cdh_size.to_le_bytes()); // Central directory size
+        data.extend_from_slice(&cdh_offset.to_le_bytes()); // Central directory offset
+        data.extend_from_slice(&0u16.to_le_bytes()); // Comment length
+
+        let mut reader = MockReader::new(data);
+        let result = ZipFile::parse(&mut reader, |_, _| Ok(())).await;
+
+        assert!(result.is_ok());
+        let zip = result.unwrap();
+        assert_eq!(zip.entries.len(), 1);
+        assert_eq!(zip.entries[0].cdh.filename, b"test");
+    }
+
+    #[test]
+    fn test_parse_zip64_eocd_locator() {
+        let mut data = vec![0u8; 20];
+        data[0..4].copy_from_slice(&0x07064b50u32.to_le_bytes()); // Signature
+        data[4..8].copy_from_slice(&0u32.to_le_bytes()); // Disk with EOCD
+        data[8..16].copy_from_slice(&100u64.to_le_bytes()); // EOCD offset
+        data[16..20].copy_from_slice(&1u32.to_le_bytes()); // Total disks
+
+        let result = Zip64EndOfCentralDirectoryLocator::parse(&data);
+        assert!(result.is_ok());
+        let locator = result.unwrap();
+        assert_eq!(locator.signature, 0x07064b50);
+        assert_eq!(locator.eocd_offset, 100);
+    }
+
+    #[test]
+    fn test_parse_data_descriptor_standard() {
+        let mut data = vec![0u8; 20];
+        // Signature
+        data[0..4].copy_from_slice(&0x08074b50u32.to_le_bytes());
+        // CRC32
+        data[4..8].copy_from_slice(&0x12345678u32.to_le_bytes());
+        // Compressed size
+        data[8..12].copy_from_slice(&100u32.to_le_bytes());
+        // Uncompressed size
+        data[12..16].copy_from_slice(&200u32.to_le_bytes());
+        // Next section signature (LFH)
+        data[16..20].copy_from_slice(&0x04034b50u32.to_le_bytes());
+
+        let result = DataDescriptor::parse_standard(&data);
+        assert!(result.is_ok());
+        let dd = result.unwrap();
+        match dd {
+            DataDescriptor::Standard {
+                signature,
+                crc32,
+                compressed_size,
+                uncompressed_size,
+            } => {
+                assert_eq!(signature, Some(0x08074b50));
+                assert_eq!(crc32, 0x12345678);
+                assert_eq!(compressed_size, 100);
+                assert_eq!(uncompressed_size, 200);
+            }
+            _ => panic!("Expected Standard DataDescriptor"),
+        }
+    }
+
+    #[test]
+    fn test_parse_data_descriptor_zip64() {
+        let mut data = vec![0u8; 28];
+        // Signature
+        data[0..4].copy_from_slice(&0x08074b50u32.to_le_bytes());
+        // CRC32
+        data[4..8].copy_from_slice(&0x12345678u32.to_le_bytes());
+        // Compressed size
+        data[8..16].copy_from_slice(&100u64.to_le_bytes());
+        // Uncompressed size
+        data[16..24].copy_from_slice(&200u64.to_le_bytes());
+        // Next section signature (LFH)
+        data[24..28].copy_from_slice(&0x04034b50u32.to_le_bytes());
+
+        let result = DataDescriptor::parse_zip64(&data);
+        assert!(result.is_ok());
+        let dd = result.unwrap();
+        match dd {
+            DataDescriptor::Zip64 {
+                signature,
+                crc32,
+                compressed_size,
+                uncompressed_size,
+            } => {
+                assert_eq!(signature, Some(0x08074b50));
+                assert_eq!(crc32, 0x12345678);
+                assert_eq!(compressed_size, 100);
+                assert_eq!(uncompressed_size, 200);
+            }
+            _ => panic!("Expected Zip64 DataDescriptor"),
+        }
     }
 }
