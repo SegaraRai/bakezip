@@ -117,6 +117,16 @@
         } as const;
       }
 
+      case "Other":
+        return {
+          level: "other",
+          message:
+            compatibility.with_unicode_path_fields === "Always" ||
+            compatibility.with_unicode_path_fields === "AlwaysForNonAscii"
+              ? "compatibility_other_with_unicode_path"
+              : "compatibility_other",
+        } as const;
+
       case "Broken":
         return {
           level: "broken",
@@ -126,9 +136,7 @@
       default:
         return {
           level: "other",
-          message: compatibility
-            ? "compatibility_other"
-            : "compatibility_unknown",
+          message: "compatibility_unknown",
         } as const;
     }
   });
