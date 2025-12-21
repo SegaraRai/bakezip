@@ -9,7 +9,12 @@ export const LOCALES: readonly {
 }[] = [
   { code: "en", name: "English" },
   { code: "ja", name: "日本語" },
-];
+] satisfies {
+  [P in Extract<keyof typeof locales, `${number}`>]: {
+    code: (typeof locales)[P];
+    name: string;
+  };
+};
 
 function toAvailableLocale(locale: string): Locale {
   if ((locales as readonly string[]).includes(locale)) {
