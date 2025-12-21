@@ -32,7 +32,6 @@ pub fn rebuild(
         lfh_offset: u64,
         filename: Vec<u8>,
         entry: &'a ZipFileEntry,
-        version_needed: u16,
         uncompressed_size: u64,
         compressed_size: u64,
         crc32: u32,
@@ -79,6 +78,11 @@ pub fn rebuild(
             .and_then(|z| z.compressed_size)
             .unwrap_or(entry.cdh.compressed_size as u64);
         let crc32 = entry.cdh.crc32;
+        let version_needed = entry
+            .cdh
+            .version_needed
+            .max(entry.lfh.version_needed)
+            .max(20);
 
         // Prepare LFH
         let mut lfh_extra_fields = entry
@@ -89,14 +93,14 @@ pub fn rebuild(
             .cloned()
             .collect::<Vec<_>>();
 
-        let mut version_needed = 20;
+        let mut version_needed = version_needed;
         let mut lfh_compressed_size = compressed_size as u32;
         let mut lfh_uncompressed_size = uncompressed_size as u32;
 
         let need_zip64_lfh = compressed_size >= 0xFFFFFFFF || uncompressed_size >= 0xFFFFFFFF;
         if need_zip64_lfh {
             // In LFH, both compressed and uncompressed sizes must be set
-            version_needed = 45;
+            version_needed = version_needed.max(45);
             lfh_compressed_size = 0xFFFFFFFF;
             lfh_uncompressed_size = 0xFFFFFFFF;
 
@@ -153,7 +157,6 @@ pub fn rebuild(
             lfh_offset,
             filename,
             entry,
-            version_needed,
             uncompressed_size,
             compressed_size,
             crc32,
@@ -168,7 +171,6 @@ pub fn rebuild(
         lfh_offset,
         filename,
         entry,
-        version_needed,
         uncompressed_size,
         compressed_size,
         crc32,
@@ -182,17 +184,24 @@ pub fn rebuild(
             .cloned()
             .collect::<Vec<_>>();
 
+        let version_made_by_os = entry.cdh.version_made_by & 0xFF00;
+        let version_made_by = version_made_by_os | 63; // 6.3 (Unix)
+
         let mut cdh_compressed_size = compressed_size as u32;
         let mut cdh_uncompressed_size = uncompressed_size as u32;
         let mut cdh_local_header_offset = lfh_offset as u32;
-        let mut final_version_needed = version_needed;
+        let mut version_needed = entry
+            .cdh
+            .version_needed
+            .max(entry.lfh.version_needed)
+            .max(20);
 
         let need_zip64_cdh = compressed_size >= 0xFFFFFFFF
             || uncompressed_size >= 0xFFFFFFFF
             || lfh_offset >= 0xFFFFFFFF;
 
         if need_zip64_cdh {
-            final_version_needed = 45;
+            version_needed = version_needed.max(45);
             let mut data = Vec::new();
 
             if uncompressed_size >= 0xFFFFFFFF {
@@ -226,8 +235,8 @@ pub fn rebuild(
 
         let cdh = CentralDirectoryHeader {
             signature: 0x02014b50,
-            version_made_by: 63, // 6.3 (Unix)
-            version_needed: final_version_needed,
+            version_made_by,
+            version_needed,
             flags,
             compression_method: entry.cdh.compression_method,
             last_mod_time: entry.cdh.last_mod_time,
