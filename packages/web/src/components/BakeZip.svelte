@@ -879,6 +879,7 @@
                       type="checkbox"
                       class="peer checkbox"
                       bind:checked={removeOSMetadataFiles}
+                      onchange={rebuildArchive}
                     />
                     <span class="peer-checked:text-primary">
                       {m.step3_remove_os_metadata_files()}
