@@ -66,6 +66,7 @@
   "step3_os_metadata_detected_description": "選択したZIPファイルには、OS固有のメタデータファイル（例：__MACOSXフォルダやThumbs.dbファイル）が含まれているようです。必要に応じて、変換後のZIPファイルからこれらのファイルを削除できます。",
   "step3_remove_os_metadata_files": "OS固有のメタデータファイルを削除する",
   "step3_download_button": "修正されたZIPファイルをダウンロード",
+  "step3_rebuilding": "ZIPファイルを再構築中…",
   "footer_privacy_text": "すべての処理はブラウザ内でローカルに行われます。ファイルがアップロードされることはありません。",
   "footer_privacy_link": "プライバシーポリシー（英語）",
   "bytes_unit_b": "B",

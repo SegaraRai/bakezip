@@ -66,6 +66,7 @@
   "step3_os_metadata_detected_description": "The selected ZIP file appears to contain OS-specific metadata files (e.g., __MACOSX folder or Thumbs.db files). You can remove these files from the converted ZIP file if desired.",
   "step3_remove_os_metadata_files": "Remove OS-specific metadata files",
   "step3_download_button": "Download Fixed ZIP File",
+  "step3_rebuilding": "Rebuilding ZIP file...",
   "footer_privacy_text": "All processing is done locally in your browser. No files are uploaded.",
   "footer_privacy_link": "Privacy Policy",
   "bytes_unit_b": "B",

@@ -24,8 +24,24 @@
   let processor = $state<ZipProcessor | null>(null);
   let inspectedArchive = $state<InspectedArchive | null>(null);
 
-  let busy = $state<"parsing" | "inspecting" | "crafting" | false>(false);
+  let busy = $state<"parsing" | "inspecting" | "rebuilding" | false>(false);
   let error = $state("");
+
+  const newFilename = $derived.by(() => {
+    if (!selectedFile) {
+      return "bakezip.zip";
+    }
+
+    const name = selectedFile.name;
+    const dotIndex = name.lastIndexOf(".");
+    if (dotIndex === -1) {
+      return `${name}_bakezip.zip`;
+    } else {
+      const base = name.substring(0, dotIndex);
+      const ext = name.substring(dotIndex);
+      return `${base}_bakezip${ext}`;
+    }
+  });
 
   const compatibility = $derived.by(
     (): CompatibilityLevel | null => processor?.compatibility ?? null,
@@ -294,6 +310,57 @@
     } finally {
       busy = false;
     }
+
+    if (inspectedArchive) {
+      await rebuildArchive();
+    }
+  }
+
+  async function rebuildArchive() {
+    if (!processor || !inspectedArchive) {
+      return;
+    }
+
+    const isNew = downloadFile == null;
+
+    if (isNew) {
+      resetStates(3);
+    }
+    busy = "rebuilding";
+    await waitUITick();
+
+    try {
+      const ts = performance.now();
+      const omitEntries = removeOSMetadataFiles
+        ? inspectedArchive.entries
+            .map((entry, index) =>
+              isOSMetadataFile(entry.filename.decoded?.string ?? "")
+                ? BigInt(index)
+                : null,
+            )
+            .filter((index): index is bigint => index != null)
+        : [];
+      const rebuiltBlob = await processor.rebuild(
+        {
+          encoding: getEncodingStrategy(encoding),
+          field_selection_strategy: fieldSelection,
+          ignore_crc32_mismatch: false,
+          needs_original_bytes: false,
+        },
+        new BigUint64Array(omitEntries),
+      );
+      const elapsed = performance.now() - ts;
+      console.info(`Rebuilt archive in ${elapsed} ms`);
+
+      downloadFile = new File([rebuiltBlob], newFilename, {
+        type: "application/zip",
+      });
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      downloadFile = null;
+    } finally {
+      busy = false;
+    }
   }
 
   function getEncodingStrategy(
@@ -322,8 +389,6 @@
 
   function handleDownload() {
     downloaded = true;
-
-    alert("Not Implemented Yet"); // TODO
   }
 </script>
 
@@ -342,16 +407,21 @@
       </p>
     </div>
 
-    <!-- Main Card -->
+    <!-- Main Cards -->
     <div class="space-y-8">
       <!-- Step 1: ZIP Select and Compatibility Display -->
-      <div class="card bg-base-100 shadow-xl">
+      <div
+        id="step1"
+        role="region"
+        aria-labelledby="step1-title"
+        class="card bg-base-100 shadow-xl"
+      >
         <div class="card-body">
-          <div class="mb-4 flex items-center gap-3">
+          <div id="step1-title" class="mb-4 flex items-center gap-3">
             <span
+              aria-label={m.step1_alt()}
               class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
               data-step="1"
-              aria-label={m.step1_alt()}
             ></span>
             <h2 class="card-title text-2xl">{m.step1_title()}</h2>
           </div>
@@ -451,8 +521,8 @@
             <div
               role="alert"
               aria-live="polite"
-              data-compatibility={compatibilityCategory.level}
               class="alert data-[compatibility=ok]:alert-success data-[compatibility=broken]:alert-error data-[compatibility=other]:alert-info"
+              data-compatibility={compatibilityCategory.level}
             >
               {#if compatibilityCategory.level === "ok"}
                 <LineMdConfirmCircle aria-hidden="true" class="size-10" />
@@ -474,6 +544,8 @@
             <div class="mt-2">
               <label class="label">
                 <input
+                  aria-controls="step2"
+                  aria-expanded={forceProceedToStep2}
                   name="force-step2"
                   type="checkbox"
                   class="peer checkbox"
@@ -490,21 +562,30 @@
 
       <!-- Step 2: Configuration (Optional, if needed) -->
       {#if step1Complete && (!shouldPauseAtStep1 || forceProceedToStep2)}
-        <div class="card bg-base-100 shadow-xl">
+        <div
+          id="step2"
+          role="region"
+          aria-labelledby="step2-title"
+          aria-live="polite"
+          class="card bg-base-100 shadow-xl"
+        >
           <div class="card-body">
             <button
+              aria-controls="step2-body"
               aria-expanded={expandStep2}
               class="flex w-full items-center gap-3 text-left"
               onclick={() => {
                 expandStep2 = !expandStep2;
               }}
             >
-              <span
-                aria-label={m.step2_alt()}
-                class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
-                data-step="2"
-              ></span>
-              <h2 class="card-title flex-1 text-2xl">{m.step2_title()}</h2>
+              <div id="step2-title" class="contents">
+                <span
+                  aria-label={m.step2_alt()}
+                  class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
+                  data-step="2"
+                ></span>
+                <h2 class="card-title flex-1 text-2xl">{m.step2_title()}</h2>
+              </div>
               <span
                 aria-hidden="true"
                 class="icon-[mdi--chevron-down] size-8 not-motion-reduce:transition-transform data-[expanded=true]:rotate-180"
@@ -512,7 +593,11 @@
               ></span>
             </button>
 
-            <div class="group space-y-6 pt-4" data-expanded={expandStep2}>
+            <div
+              id="step2-body"
+              class="group space-y-6 pt-4"
+              data-expanded={expandStep2}
+            >
               <!-- Encoding Selection -->
               <fieldset class="fieldset group-data-[expanded=false]:hidden">
                 <legend class="fieldset-legend text-sm"
@@ -654,10 +739,7 @@
                               entry.filename.detected_encoding &&
                               entry.filename.detected_encoding !== "ASCII"}
                           >
-                            <td
-                              class="w-8"
-                              title={entry.filename.decoded?.string}
-                            >
+                            <td class="w-8">
                               <span
                                 aria-hidden="true"
                                 class="grid place-items-center"
@@ -741,6 +823,8 @@
               <div class="mt-4">
                 <label class="label">
                   <input
+                    aria-controls="step3"
+                    aria-expanded={forceProceedToStep3}
                     name="force-step3"
                     type="checkbox"
                     class="peer checkbox"
@@ -758,13 +842,19 @@
 
       <!-- Step 3: Convert and Download -->
       {#if step2Complete && (!shouldPauseAtStep1 || forceProceedToStep2) && (!shouldPauseAtStep2 || forceProceedToStep3)}
-        <div class="card bg-base-100 shadow-xl">
+        <div
+          id="step3"
+          role="region"
+          aria-labelledby="step3-title"
+          aria-live="polite"
+          class="card bg-base-100 shadow-xl"
+        >
           <div class="card-body">
-            <div class="mb-4 flex items-center gap-3">
+            <div id="step3-title" class="mb-4 flex items-center gap-3">
               <span
+                aria-label={m.step3_alt()}
                 class="badge badge-primary badge-lg text-center size-8 rounded-full p-0 font-bold before:content-[attr(data-step)]"
                 data-step="3"
-                aria-label={m.step3_alt()}
               ></span>
               <h2 class="card-title text-2xl">{m.step3_title()}</h2>
             </div>
@@ -799,25 +889,39 @@
               <p class="text-base-content/70">
                 {m.step3_description()}
               </p>
-              <button
-                onclick={handleDownload}
+              <!-- svelte-ignore a11y_no_redundant_roles -->
+              <a
+                role="link"
+                aria-disabled={!downloadURL || !!busy}
+                href={downloadURL && !busy ? downloadURL : undefined}
+                download={downloadURL && !busy ? newFilename : undefined}
+                class="group btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 not-aria-disabled:data-[downloaded=false]:anim-shine"
                 data-downloaded={downloaded}
-                class="btn btn-lg h-auto btn-primary w-full grid grid-cols-[auto_1fr] justify-items-start gap-3 px-3 py-2 enabled:data-[downloaded=false]:anim-shine"
+                data-animate={!!downloadURL && !downloaded}
+                onclick={handleDownload}
               >
-                {#if downloaded || !downloadURL}
-                  <LineMdDownload aria-hidden="true" class="size-10" />
-                {:else}
-                  <LineMdDownloadLoop
+                {#if busy === "rebuilding"}
+                  <LineMdLoadingLoop
                     aria-hidden="true"
                     class="size-10 motion-reduce:hidden"
                   />
+                  <span
+                    aria-hidden="true"
+                    class="size-10 icon-[mdi--hourglass] not-motion-reduce:hidden"
+                  ></span>
+                  <span>{m.step3_rebuilding()}</span>
+                {:else}
+                  <LineMdDownloadLoop
+                    aria-hidden="true"
+                    class="size-10 motion-reduce:hidden group-data-[animate=false]:hidden"
+                  />
                   <LineMdDownload
                     aria-hidden="true"
-                    class="size-10 not-motion-reduce:hidden"
+                    class="size-10 not-motion-reduce:group-data-[animate=true]:hidden"
                   />
+                  <span>{m.step3_download_button()}</span>
                 {/if}
-                <span>{m.step3_download_button()}</span>
-              </button>
+              </a>
             </div>
           </div>
         </div>
