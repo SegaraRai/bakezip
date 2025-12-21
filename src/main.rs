@@ -20,13 +20,17 @@ struct Cli {
     /// Input ZIP file
     input: PathBuf,
 
-    /// Fallback encoding (default: auto-detect)
-    #[arg(long, global = true)]
+    /// Encoding to use (fallback by default, forced if --force is used)
+    #[arg(long, short, global = true)]
     encoding: Option<String>,
 
-    /// Force specific encoding
-    #[arg(long, global = true)]
-    force_encoding: Option<String>,
+    /// Force the specified encoding
+    #[arg(long, short, global = true)]
+    force: bool,
+
+    /// Field selection strategy
+    #[arg(long, short = 's', global = true, value_enum, default_value_t = FieldSelectionStrategyArg::CdhUnicodeThenLfhUnicodeThenCdh)]
+    field: FieldSelectionStrategyArg,
 
     /// Ignore UTF-8 flag
     #[arg(long, global = true)]
@@ -35,10 +39,6 @@ struct Cli {
     /// Ignore CRC32 mismatch in UTF-8 extra fields
     #[arg(long, global = true)]
     ignore_crc32_mismatch: bool,
-
-    /// Field selection strategy
-    #[arg(long, global = true, value_enum, default_value_t = FieldSelectionStrategyArg::CdhUnicodeThenLfhUnicodeThenCdh)]
-    field_strategy: FieldSelectionStrategyArg,
 }
 
 #[derive(Subcommand)]
@@ -54,6 +54,10 @@ enum Commands {
         /// Omit entries by index
         #[arg(long)]
         omit: Vec<u64>,
+
+        /// Remove OS metadata files (__MACOSX, .DS_Store, Thumbs.db, desktop.ini)
+        #[arg(long, short = 'm')]
+        remove_os_metadata: bool,
     },
 }
 
@@ -128,6 +132,31 @@ impl ZipReader for FileZipReader {
     }
 }
 
+fn is_os_metadata_file(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    // Directories and files
+    if lower.starts_with("__macosx/") || lower.contains("/__macosx/") {
+        return true;
+    }
+    if lower == ".ds_store"
+        || lower.starts_with(".ds_store/")
+        || lower.ends_with("/.ds_store")
+        || lower.contains("/.ds_store/")
+    {
+        return true;
+    }
+
+    // Files only
+    if lower == "thumbs.db" || lower.ends_with("/thumbs.db") {
+        return true;
+    }
+    if lower == "desktop.ini" || lower.ends_with("/desktop.ini") {
+        return true;
+    }
+
+    false
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -140,10 +169,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await
     .map_err(|e| format!("Failed to parse zip: {e}"))?;
 
-    let encoding_strategy = if let Some(enc) = cli.force_encoding {
-        EncodingSelectionStrategy::ForceSpecified {
-            encoding: enc,
-            ignore_utf8_flag: cli.ignore_utf8_flag,
+    let encoding_strategy = if cli.force {
+        if let Some(enc) = cli.encoding {
+            EncodingSelectionStrategy::ForceSpecified {
+                encoding: enc,
+                ignore_utf8_flag: cli.ignore_utf8_flag,
+            }
+        } else {
+            return Err("You must specify --encoding when using --force".into());
         }
     } else {
         EncodingSelectionStrategy::PreferOverallDetected {
@@ -154,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = InspectConfig {
         encoding: encoding_strategy,
-        field_selection_strategy: cli.field_strategy.into(),
+        field_selection_strategy: cli.field.into(),
         ignore_crc32_mismatch: cli.ignore_crc32_mismatch,
         needs_original_bytes: false,
     };
@@ -164,10 +197,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let inspected = InspectedArchive::inspect(&zip_file, &config)
                 .map_err(|e| format!("Failed to inspect zip: {}", e))?;
 
+            println!("Overall encoding: {:?}", inspected.overall_encoding);
+
             let compatibility = CompatibilityLevel::analyze(&zip_file);
             println!("Compatibility: {compatibility:?}");
 
-            println!("Overall encoding: {:?}", inspected.overall_encoding);
             println!("Entries: {}", inspected.entries.len());
             for (i, entry) in inspected.entries.iter().enumerate() {
                 let filename = entry
@@ -179,8 +213,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{i}: {filename}");
             }
         }
-        Commands::Rebuild { output, omit } => {
-            let (chunks, _) = rebuild(&zip_file, &config, &omit)
+        Commands::Rebuild {
+            output,
+            omit,
+            remove_os_metadata,
+        } => {
+            let mut omit_indices = omit.clone();
+            if remove_os_metadata {
+                let inspected = InspectedArchive::inspect(&zip_file, &config)
+                    .map_err(|e| format!("Failed to inspect zip for filtering: {}", e))?;
+                for (i, entry) in inspected.entries.iter().enumerate() {
+                    let filename = entry
+                        .filename
+                        .decoded
+                        .as_ref()
+                        .map(|d| d.string.as_str())
+                        .unwrap_or("");
+                    if is_os_metadata_file(filename) {
+                        omit_indices.push(i as u64);
+                    }
+                }
+            }
+
+            let (chunks, _) = rebuild(&zip_file, &config, &omit_indices)
                 .map_err(|e| format!("Failed to rebuild zip: {e}"))?;
 
             let mut output_file = tokio::fs::File::create(output).await?;

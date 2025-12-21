@@ -9,12 +9,15 @@ use std::collections::HashSet;
 use std::io::Write;
 use thiserror::Error;
 
+/// A chunk of data in the rebuilt zip file
 #[derive(Debug, Clone)]
 pub enum RebuildChunk {
     Reference { offset: u64, size: u64 },
     Binary(Vec<u8>),
 }
 
+/// Rebuilds a zip file with UTF-8 filenames according to the provided configuration,
+/// omitting entries specified by their indices.
 pub fn rebuild(
     zip_file: &ZipFile,
     config: &InspectConfig,
@@ -328,6 +331,7 @@ pub fn rebuild(
     Ok((chunks, current_offset))
 }
 
+/// Errors that can occur during the rebuild process
 #[derive(Debug, Error)]
 pub enum RebuildError {
     #[error("Inspection failed: {0}")]
@@ -336,6 +340,7 @@ pub enum RebuildError {
     Io(#[from] std::io::Error),
 }
 
+/// Trait for serializing zip structures to bytes
 trait ZipSerialize {
     fn to_bytes(&self) -> std::io::Result<Vec<u8>>;
 }

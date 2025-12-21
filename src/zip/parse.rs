@@ -13,6 +13,7 @@ pub trait ZipReader {
     ) -> impl std::future::Future<Output = Result<Vec<u8>, io::Error>>;
 }
 
+/// Representation of a parsed zip file
 #[derive(Debug, Clone)]
 pub struct ZipFile {
     /// The overall size of the zip file
