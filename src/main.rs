@@ -1,8 +1,7 @@
-use std::io;
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use bakezip::zip::{
     compatibility::CompatibilityLevel,
@@ -109,25 +108,26 @@ impl From<FieldSelectionStrategyArg> for FieldSelectionStrategy {
 }
 
 struct FileZipReader {
-    file: tokio::fs::File,
+    file: std::fs::File,
 }
 
 impl FileZipReader {
-    async fn new(path: impl AsRef<Path>) -> io::Result<Self> {
-        let file = tokio::fs::File::open(path).await?;
+    fn new(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = std::fs::File::open(path)?;
         Ok(Self { file })
     }
 }
 
 impl ZipReader for FileZipReader {
     async fn get_size(&mut self) -> io::Result<u64> {
-        self.file.metadata().await.map(|m| m.len())
+        let metadata = self.file.metadata()?;
+        Ok(metadata.len())
     }
 
     async fn read(&mut self, offset: u64, size: u64) -> io::Result<Vec<u8>> {
-        self.file.seek(io::SeekFrom::Start(offset)).await?;
+        self.file.seek(io::SeekFrom::Start(offset))?;
         let mut buffer = vec![0; size as usize];
-        self.file.read_exact(&mut buffer).await?;
+        self.file.read_exact(&mut buffer)?;
         Ok(buffer)
     }
 }
@@ -157,11 +157,11 @@ fn is_os_metadata_file(filename: &str) -> bool {
     false
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let mut reader = FileZipReader::new(&cli.input).await?;
+    let mut reader = FileZipReader::new(&cli.input)?;
     let zip_file = ZipFile::parse(&mut reader, |idx, err| {
         eprintln!("Warning at index {idx:?}: {err}");
         Ok(())
@@ -238,20 +238,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (chunks, _) = rebuild(&zip_file, &config, &omit_indices)
                 .map_err(|e| format!("Failed to rebuild zip: {e}"))?;
 
-            let mut output_file = tokio::fs::File::create(output).await?;
-            use tokio::io::AsyncWriteExt;
-
+            let mut output_file = std::fs::File::create(output)?;
             for chunk in chunks {
                 match chunk {
                     RebuildChunk::Binary(data) => {
-                        output_file.write_all(&data).await?;
+                        output_file.write_all(&data)?;
                     }
                     RebuildChunk::Reference { offset, size } => {
                         let data = reader.read(offset, size).await?;
-                        output_file.write_all(&data).await?;
+                        output_file.write_all(&data)?;
                     }
                 }
             }
+
             println!("Rebuild complete.");
         }
     }
