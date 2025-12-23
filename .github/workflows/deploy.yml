@@ -106,13 +106,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck web application
-        run: pnpm run check
-
       - name: Build web application
         run: pnpm run build:web
         env:
           NODE_ENV: production
+
+      # We have to run typecheck after build since we need to have the localization files generated
+      - name: Typecheck web application
+        run: pnpm run check
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
