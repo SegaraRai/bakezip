@@ -574,7 +574,6 @@
           id="step2"
           role="region"
           aria-labelledby="step2-title"
-          aria-live="polite"
           class="card bg-base-100 shadow-xl"
         >
           <div class="card-body">
@@ -854,7 +853,6 @@
           id="step3"
           role="region"
           aria-labelledby="step3-title"
-          aria-live="polite"
           class="card bg-base-100 shadow-xl"
         >
           <div class="card-body">
