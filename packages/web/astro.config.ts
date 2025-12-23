@@ -17,6 +17,11 @@ export default defineConfig({
   },
   integrations: [
     playformCompress({
+      HTML: {
+        "html-minifier-terser": {
+          ignoreCustomComments: [/^[![\]#]/, /^astro:/],
+        },
+      },
       SVG: {
         svgo: {
           plugins: [
