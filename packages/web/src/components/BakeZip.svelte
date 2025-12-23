@@ -473,7 +473,7 @@
           </div>
 
           {#if busy === "parsing"}
-            <div role="alert" class="alert alert-info" aria-live="polite">
+            <div role="status" class="alert alert-info" aria-live="polite">
               <LineMdLoadingLoop
                 aria-hidden="true"
                 class="size-10 motion-reduce:hidden"
@@ -488,7 +488,7 @@
 
           <!-- Error Message -->
           {#if error}
-            <div role="alert" aria-live="polite" class="alert alert-error">
+            <div role="alert" class="alert alert-error">
               <LineMdCloseCircle class="size-10" aria-hidden="true" />
               <span>{error}</span>
             </div>
@@ -527,7 +527,7 @@
           <!-- Compatibility Check Results -->
           {#if step1Complete && compatibility}
             <div
-              role="alert"
+              role="status"
               aria-live="polite"
               class="alert data-[compatibility=ok]:alert-success data-[compatibility=broken]:alert-error data-[compatibility=other]:alert-info"
               data-compatibility={compatibilityCategory.level}
@@ -868,7 +868,7 @@
             <div class="space-y-4">
               {#if hasOSMetadataFiles}
                 <div class="space-y-2">
-                  <div role="alert" aria-live="polite" class="alert alert-info">
+                  <div role="status" aria-live="polite" class="alert alert-info">
                     <LineMdAlertCircle aria-hidden="true" class="size-10" />
                     <div>
                       <h3 class="font-bold">
