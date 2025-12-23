@@ -42,16 +42,19 @@ jobs:
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            extension: .exe
             artifact-name: bakezip-cli-windows-x86_64.exe
 
           # Windows aarch64
           - os: windows-latest
             target: aarch64-pc-windows-msvc
+            extension: .exe
             artifact-name: bakezip-cli-windows-aarch64.exe
 
           # Wasip2
           - os: ubuntu-latest
             target: wasm32-wasip2
+            extension: .wasm
             artifact-name: bakezip-cli-wasip2.wasm
 
     steps:
@@ -93,11 +96,7 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/bakezip-cli.exe" "${{ matrix.artifact-name }}"
-          else
-            cp "target/${{ matrix.target }}/release/bakezip-cli" "${{ matrix.artifact-name }}"
-          fi
+          cp "target/${{ matrix.target }}/release/bakezip-cli${{ matrix.extension }}" "${{ matrix.artifact-name }}"
         shell: bash
 
       - name: Upload artifact
