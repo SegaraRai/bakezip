@@ -106,6 +106,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Typecheck web application
+        run: pnpm run check
+
       - name: Build web application
         run: pnpm run build:web
         env:
