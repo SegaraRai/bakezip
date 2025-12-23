@@ -1,5 +1,6 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "seo_page_description": "使用 BakeZip 直接在浏览器中修复乱码的 ZIP 文件名并检查归档内容。安全、快速且注重隐私。",
   "skip_to_main_content": "跳转到主要内容",
   "header_title": "BakeZip",
   "header_tagline": "在浏览器中修复 ZIP 乱码",

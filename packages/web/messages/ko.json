@@ -1,5 +1,6 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "seo_page_description": "BakeZip을 사용하여 브라우저에서 직접 깨진 ZIP 파일 이름을 수정하고 아카이브 내용을 검사하세요. 안전하고 빠르며 개인정보를 보호합니다.",
   "skip_to_main_content": "메인 콘텐츠로 건너뛰기",
   "header_title": "BakeZip",
   "header_tagline": "브라우저에서 ZIP 문자 깨짐 해결",
