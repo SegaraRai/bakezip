@@ -1,7 +1,7 @@
 import { m as orgM } from "../paraglide/messages";
 import { baseLocale, type Locale, locales } from "../paraglide/runtime";
 
-export type { Locale };
+export type { Locale } from "../paraglide/runtime";
 
 export const LOCALES: readonly {
   readonly code: Locale;
@@ -9,6 +9,9 @@ export const LOCALES: readonly {
 }[] = [
   { code: "en", name: "English" },
   { code: "ja", name: "日本語" },
+  { code: "ko", name: "한국어" },
+  { code: "zh-CN", name: "简体中文" },
+  { code: "zh-TW", name: "繁體中文" },
 ] satisfies {
   [P in Extract<keyof typeof locales, `${number}`>]: {
     code: (typeof locales)[P];
