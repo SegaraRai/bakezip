@@ -18,7 +18,7 @@
   const m = $derived.by(() => createI18n(currentLocale));
 </script>
 
-<div class="dropdown dropdown-end">
+<div class="dropdown dropdown-end" translate="no">
   <div
     role="button"
     aria-label={m.language_selector_label()}
@@ -29,6 +29,7 @@
     <span aria-hidden="true" class="icon-[mdi--translate] text-xl"></span>
     <span
       aria-hidden="true"
+      lang={currentLocale}
       class="max-sm:hidden before:content-[attr(data-locale)]"
       data-locale={localeName}
     ></span>
@@ -44,6 +45,7 @@
             role="link"
             aria-current="true"
             aria-disabled="true"
+            lang={locale.code}
             class="font-bold"
           >
             {locale.name}
@@ -53,6 +55,7 @@
         <li>
           <a
             href={getLocalizedPath(pathname, locale.code)}
+            lang={locale.code}
             class:active={locale.code === currentLocale}
           >
             {locale.name}

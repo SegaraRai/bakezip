@@ -60,7 +60,7 @@
 </script>
 
 {#if show && suggestedLocale}
-  <div class="toast toast-bottom toast-center z-50">
+  <div lang={suggestedLocale.code} class="toast toast-bottom toast-center z-50">
     <div role="alert" aria-live="assertive" class="alert alert-info shadow-lg">
       <span aria-hidden="true" class="icon-[mdi--translate] text-2xl"></span>
       <div>
