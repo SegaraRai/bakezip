@@ -107,18 +107,17 @@ const alternateLinks = LOCALES.map((l) => ({
       {
         !noTranslate && (
           <LanguageSelector
-            client:idle
             currentLocale={locale}
             pathname={Astro.url.pathname}
           />
         )
       }
-      <ThemeSelector client:idle locale={locale} />
+      <ThemeSelector client:idle={{ timeout: 500 }} locale={locale} />
     </header>
     {
       !noTranslate && (
         <LanguageSuggestion
-          client:idle
+          client:load
           currentLocale={locale}
           pathname={Astro.url.pathname}
         />
