@@ -1,5 +1,6 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "seo_page_description": "Fix garbled ZIP filenames and inspect archive contents directly in your browser with BakeZip. Secure, fast, and privacy-focused.",
   "skip_to_main_content": "Skip to main content",
   "header_title": "BakeZip",
   "header_tagline": "Fix ZIP Mojibake in Your Browser",

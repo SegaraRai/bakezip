@@ -1,6 +1,11 @@
 ---
 import "../global.css";
-import { createI18n, type Locale } from "../lib/i18n";
+import {
+  createI18n,
+  type Locale,
+  LOCALES,
+  getLocalizedPath,
+} from "../lib/i18n";
 import ThemeSelector from "../components/ThemeSelector.svelte";
 import LanguageSelector from "../components/LanguageSelector.svelte";
 import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
@@ -13,8 +18,16 @@ interface Props {
   title?: string;
 }
 
-const { locale } = Astro.props;
+const { locale, title = "BakeZip" } = Astro.props;
 const m = createI18n(locale);
+
+const socialImage = new URL(`/social-${locale}.png`, Astro.url);
+const description = m.seo_page_description();
+
+const alternateLinks = LOCALES.map((l) => ({
+  href: new URL(getLocalizedPath(Astro.url.pathname, l.code), Astro.url),
+  hreflang: l.code,
+})).filter((link) => link.hreflang !== locale);
 ---
 
 <!doctype html>
@@ -22,7 +35,24 @@ const m = createI18n(locale);
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{Astro.props.title ?? "BakeZip"}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={Astro.url} />
+    <meta property="og:image" content={socialImage} />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={socialImage} />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={Astro.url} />
+    {
+      alternateLinks.map((link) => (
+        <link rel="alternate" hreflang={link.hreflang} href={link.href} />
+      ))
+    }
+    <title>{title}</title>
     <script is:inline>
       (() => {
         let theme = "light";

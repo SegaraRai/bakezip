@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <!-- Light mode background gradient -->
+    <linearGradient id="bg-light" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e0e0e0;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Dark mode background gradient -->
+    <linearGradient id="bg-dark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2d2d2d;stop-opacity:1" />
+    </linearGradient>
+
+    <style>
+      /* Light mode (default) */
+      .bg-rect {
+        fill: url(#bg-light);
+      }
+
+      .main-strokes {
+        stroke: #1a1a1a;
+      }
+
+      .accent-strokes {
+        stroke: #5e60ce;
+      }
+
+      /* Dark mode */
+      @media (prefers-color-scheme: dark) {
+        .bg-rect {
+          fill: url(#bg-dark);
+        }
+
+        .main-strokes {
+          stroke: #e0e0e0;
+        }
+
+        .accent-strokes {
+          stroke: #7d7fec;
+        }
+      }
+    </style>
+  </defs>
+
+  <rect class="bg-rect" width="64" height="64" />
+
+  <!-- Delicate thin strokes - modified slightly longer -->
+  <g class="main-strokes" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 11 L12 29" />
+    <path d="M21 22 V50" />
+    <path d="M36 12 V39 Q36 50 51 48" />
+    <path d="M40 27 L51 21" />
+  </g>
+
+  <!-- Accent color overlay -->
+  <g class="accent-strokes" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.25">
+    <path d="M24 11 L12 29" />
+    <path d="M21 22 V50" />
+    <path d="M36 12 V39 Q36 50 51 48" />
+    <path d="M40 27 L51 21" />
+  </g>
+</svg>

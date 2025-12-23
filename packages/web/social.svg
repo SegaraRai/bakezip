@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" data-display-lang="en">
+  <style>
+    svg {
+      --font: 'Noto Sans';
+    }
+
+    text {
+      font-family: var(--font);
+    }
+
+    [data-lang="en"] {
+      visibility: var(--lang-en, visible);
+    }
+
+    [data-lang="ja"] {
+      --font: 'Noto Sans JP';
+      visibility: var(--lang-ja, hidden);
+    }
+
+    [data-lang="ko"] {
+      --font: 'Noto Sans KR';
+      visibility: var(--lang-ko, hidden);
+    }
+
+    [data-lang="zh-CN"] {
+      --font: 'Noto Sans SC';
+      visibility: var(--lang-zh-CN, hidden);
+    }
+
+    [data-lang="zh-TW"] {
+      --font: 'Noto Sans TC';
+      visibility: var(--lang-zh-TW, hidden);
+    }
+
+    [data-display-lang="ja"] {
+      --lang-en: hidden;
+      --lang-ja: visible;
+    }
+
+    [data-display-lang="ko"] {
+      --lang-en: hidden;
+      --lang-ko: visible;
+    }
+
+    [data-display-lang="zh-CN"] {
+      --lang-en: hidden;
+      --lang-zh-CN: visible;
+    }
+
+    [data-display-lang="zh-TW"] {
+      --lang-en: hidden;
+      --lang-zh-TW: visible;
+    }
+
+    .logo-font {
+      font-family: Roboto !important;
+    }
+  </style>
+
+  <!-- Diagonal split - Purple/Teal variation -->
+  <defs>
+    <linearGradient id="bg8aa" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4f46e5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6356f1;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bg8ab" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#dcdcdc;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#fcfeff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg8ab)" />
+
+  <!-- Diagonal purple section -->
+  <polygon points="0,0 650,0 400,630 0,630" fill="url(#bg8aa)" />
+
+  <!-- Left side - white text on purple -->
+  <g transform="translate(140, 165)">
+    <g transform="translate(15, 0)">
+      <g transform="scale(2.5)">
+        <g fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M24 11 L12 29" stroke="#ffffff" />
+          <path d="M21 22 V50" stroke="#ffffff" />
+          <path d="M36 12 V39 Q36 50 51 48" stroke="#ffffff" />
+          <path d="M40 27 L51 21" stroke="#ffffff" />
+        </g>
+        <g fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.3">
+          <path d="M24 11 L12 29" stroke="#ffffff" />
+          <path d="M21 22 V50" stroke="#ffffff" />
+          <path d="M36 12 V39 Q36 50 51 48" stroke="#ffffff" />
+          <path d="M40 27 L51 21" stroke="#ffffff" />
+        </g>
+      </g>
+    </g>
+
+    <g transform="translate(0, 220)">
+      <text class="logo-font" x="0" y="0" font-size="58" font-weight="700" fill="#ffffff"
+        text-anchor="start">BakeZip</text>
+
+      <text data-lang="en" x="0" y="60" font-size="24" fill="#e8e8ff" text-anchor="start">Privacy-First ZIP Fixer</text>
+
+      <text data-lang="ja" x="0" y="56" font-size="24" fill="#e8e8ff" text-anchor="start">プライバシーファーストな</text>
+      <text data-lang="ja" x="0" y="90" font-size="24" fill="#e8e8ff" text-anchor="start">ZIP修復ツール</text>
+
+      <text data-lang="ko" x="0" y="56" font-size="24" fill="#e8e8ff" text-anchor="start">프라이버시 우선</text>
+      <text data-lang="ko" x="0" y="90" font-size="24" fill="#e8e8ff" text-anchor="start">ZIP 복구 도구</text>
+
+      <text data-lang="zh-CN" x="0" y="60" font-size="24" fill="#e8e8ff" text-anchor="start">隐私优先的 ZIP 修复工具</text>
+
+      <text data-lang="zh-TW" x="0" y="60" font-size="24" fill="#e8e8ff" text-anchor="start">隱私優先的 ZIP 修復工具</text>
+    </g>
+  </g>
+
+  <!-- Right side - dark text -->
+  <g transform="translate(615, 220)">
+    <text data-lang="en" x="0" y="0" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">Fix ZIP
+      Mojibake</text>
+    <text data-lang="en" x="0" y="50" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">in Your
+      Browser</text>
+
+    <text data-lang="ja" x="0" y="0" font-size="44" font-weight="600" fill="#1a1a1a"
+      text-anchor="start">ブラウザでZIPファイルの</text>
+    <text data-lang="ja" x="0" y="50" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">文字化けを修復</text>
+
+    <text data-lang="ko" x="0" y="0" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">브라우저에서</text>
+    <text data-lang="ko" x="0" y="50" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">ZIP 문자 깨짐
+      해결</text>
+
+    <text data-lang="zh-CN" x="0" y="0" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">在浏览器中</text>
+    <text data-lang="zh-CN" x="0" y="50" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">修复 ZIP
+      乱码</text>
+
+    <text data-lang="zh-TW" x="0" y="0" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">在瀏覽器中</text>
+    <text data-lang="zh-TW" x="0" y="50" font-size="44" font-weight="600" fill="#1a1a1a" text-anchor="start">修復 ZIP
+      亂碼</text>
+
+    <g transform="translate(0, 113)">
+      <text data-lang="en" x="0" y="0" font-size="22" fill="#5a5a5a" text-anchor="start">✓ All processing in
+        browser</text>
+      <text data-lang="en" x="0" y="40" font-size="22" fill="#5a5a5a" text-anchor="start">✓ Complete privacy</text>
+      <text data-lang="en" x="0" y="80" font-size="22" fill="#5a5a5a" text-anchor="start">✓ No installation
+        needed</text>
+
+      <text data-lang="ja" x="0" y="0" font-size="22" fill="#5a5a5a" text-anchor="start">✓ すべてブラウザ内で処理</text>
+      <text data-lang="ja" x="0" y="40" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 完全なプライバシー保護</text>
+      <text data-lang="ja" x="0" y="80" font-size="22" fill="#5a5a5a" text-anchor="start">✓ インストール不要</text>
+
+      <text data-lang="ko" x="0" y="0" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 모든 처리는 브라우저 내에서</text>
+      <text data-lang="ko" x="0" y="40" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 완벽한 개인정보 보호</text>
+      <text data-lang="ko" x="0" y="80" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 설치 불필요</text>
+
+      <text data-lang="zh-CN" x="0" y="0" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 所有处理均在浏览器内完成</text>
+      <text data-lang="zh-CN" x="0" y="40" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 完全保护隐私</text>
+      <text data-lang="zh-CN" x="0" y="80" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 无需安装</text>
+
+      <text data-lang="zh-TW" x="0" y="0" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 所有處理均在瀏覽器內完成</text>
+      <text data-lang="zh-TW" x="0" y="40" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 完全保護隱私</text>
+      <text data-lang="zh-TW" x="0" y="80" font-size="22" fill="#5a5a5a" text-anchor="start">✓ 無需安裝</text>
+    </g>
+
+    <text data-lang="en" x="0" y="270" font-size="18" fill="#8a8a8a" text-anchor="start">Before distributing ZIP
+      files</text>
+
+    <text data-lang="ja" x="0" y="270" font-size="18" fill="#8a8a8a" text-anchor="start">ZIPファイルを配布する前に</text>
+
+    <text data-lang="ko" x="0" y="270" font-size="18" fill="#8a8a8a" text-anchor="start">ZIP 파일을 배포하기 전에</text>
+
+    <text data-lang="zh-CN" x="0" y="270" font-size="18" fill="#8a8a8a" text-anchor="start">分发 ZIP 文件之前</text>
+
+    <text data-lang="zh-TW" x="0" y="270" font-size="18" fill="#8a8a8a" text-anchor="start">分發 ZIP 檔案之前</text>
+  </g>
+</svg>
