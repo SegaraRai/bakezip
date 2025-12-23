@@ -954,7 +954,7 @@
     <div>
       <p class="mt-8 text-center text-sm text-base-content/50">
         {m.footer_privacy_text()}
-        <a href="/privacy-policy" class="link link-hover"
+        <a href="/privacy" class="link link-hover"
           >{m.footer_privacy_link()}</a
         >
       </p>

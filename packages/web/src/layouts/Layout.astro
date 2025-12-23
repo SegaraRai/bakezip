@@ -16,9 +16,16 @@ interface Props {
   bodyClass?: any;
   mainClass?: any;
   title?: string;
+  noShare?: boolean;
+  noTranslate?: boolean;
 }
 
-const { locale, title = "BakeZip" } = Astro.props;
+const {
+  locale,
+  title = "BakeZip",
+  noShare = false,
+  noTranslate = false,
+} = Astro.props;
 const m = createI18n(locale);
 
 const socialImage = new URL(`/social-${locale}.png`, Astro.url);
@@ -78,31 +85,45 @@ const alternateLinks = LOCALES.map((l) => ({
     <header
       class="fixed top-0 right-0 px-6 py-4 flex gap-2 justify-end z-50 not-lg:w-full bg-base-300/75 backdrop-blur-sm lg:rounded-bl-md"
     >
-      <span class="h-10 grid place-items-center">
-        <a
-          title={m.share_on_x()}
-          href={`https://x.com/intent/tweet?text=${encodeURIComponent(m.share_text({ url: Astro.url.origin }))}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="btn btn-sm btn-ghost gap-2"
-        >
-          <span class="icon-[mdi--share-variant] text-lg" aria-hidden="true"
-          ></span>
-          <span class="max-sm:sr-only">{m.share_on_x()}</span>
-        </a></span
-      >
-      <LanguageSelector
-        client:idle
-        currentLocale={locale}
-        pathname={Astro.url.pathname}
-      />
+      {
+        !noShare && (
+          <span class="h-10 grid place-items-center">
+            <a
+              title={m.share_on_x()}
+              href={`https://x.com/intent/tweet?text=${encodeURIComponent(m.share_text({ url: Astro.url }))}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn btn-sm btn-ghost gap-2"
+            >
+              <span
+                class="icon-[mdi--share-variant] text-lg"
+                aria-hidden="true"
+              />
+              <span class="max-sm:sr-only">{m.share_on_x()}</span>
+            </a>
+          </span>
+        )
+      }
+      {
+        !noTranslate && (
+          <LanguageSelector
+            client:idle
+            currentLocale={locale}
+            pathname={Astro.url.pathname}
+          />
+        )
+      }
       <ThemeSelector client:idle locale={locale} />
     </header>
-    <LanguageSuggestion
-      client:idle
-      currentLocale={locale}
-      pathname={Astro.url.pathname}
-    />
+    {
+      !noTranslate && (
+        <LanguageSuggestion
+          client:idle
+          currentLocale={locale}
+          pathname={Astro.url.pathname}
+        />
+      )
+    }
     <main id="main-content" class:list={Astro.props.mainClass ?? "contents"}>
       <!-- Top Padding For Fixed Header -->
       <div class="w-full h-18 lg:hidden"></div>
