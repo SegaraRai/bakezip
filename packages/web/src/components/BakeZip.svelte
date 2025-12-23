@@ -931,6 +931,21 @@
                   <span>{m.step3_download_button()}</span>
                 {/if}
               </a>
+
+              {#if downloaded}
+                <a
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href="https://x.com/intent/tweet?text={encodeURIComponent(
+                    m.share_text_after_download({
+                      url: location.href.replace(/[?#].*/, ''),
+                    }),
+                  )}"
+                  class="link link-hover text-sm"
+                >
+                  {m.share_on_x()}
+                </a>
+              {/if}
             </div>
           </div>
         </div>

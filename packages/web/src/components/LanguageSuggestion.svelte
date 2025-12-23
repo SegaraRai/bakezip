@@ -34,7 +34,12 @@
         LOCALES.find((l) => l.code === `${parsed.language}-${parsed.region}`) ??
         LOCALES.find((l) => l.code === parsed.language);
       if (matched) {
-        if (matched.code !== currentLocale) {
+        if (matched.code === currentLocale) {
+          // Clear dismissed flag if user is already using the suggested language
+          try {
+            localStorage.removeItem(LSKEY_DISMISSED);
+          } catch {}
+        } else {
           suggestedLocale = matched;
           show = true;
         }
@@ -48,7 +53,9 @@
 
   function dismiss() {
     show = false;
-    localStorage.setItem(LSKEY_DISMISSED, "true");
+    try {
+      localStorage.setItem(LSKEY_DISMISSED, "true");
+    } catch {}
   }
 </script>
 

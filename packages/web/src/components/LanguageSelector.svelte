@@ -29,7 +29,7 @@
     <span aria-hidden="true" class="icon-[mdi--translate] text-xl"></span>
     <span
       aria-hidden="true"
-      class="hidden sm:inline before:content-[attr(data-locale)]"
+      class="max-sm:hidden before:content-[attr(data-locale)]"
       data-locale={localeName}
     ></span>
   </div>
