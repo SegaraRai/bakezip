@@ -7,6 +7,14 @@
     night;
 }
 
+@layer base {
+  body {
+    overflow-wrap: anywhere;
+    word-break: normal;
+    line-break: strict;
+  }
+}
+
 @utility anim-shine {
   position: relative;
   overflow: hidden;
