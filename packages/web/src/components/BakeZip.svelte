@@ -783,8 +783,8 @@
                                 </span>
                               {/if}
                             </td>
-                            <td lang="en" class="w-40 text-base-content/70">
-                              {entry.filename.kind}
+                            <td class="w-40 text-base-content/70">
+                              {m[`field_type_${entry.filename.kind}`]()}
                             </td>
                             <td class="w-30 text-center">
                               <span class="grid place-items-center">
