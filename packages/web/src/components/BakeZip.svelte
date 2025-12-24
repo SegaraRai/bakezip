@@ -400,7 +400,7 @@
 <div class="p-4 md:p-8">
   <div class="mx-auto max-w-6xl">
     <!-- Header -->
-    <div class="mb-8 text-center">
+    <div class="mb-8 text-center [view-transition-name:app-header]">
       <h1 class="mb-2 text-4xl font-bold text-base-content">
         {m.header_title()}
       </h1>
@@ -952,6 +952,8 @@
         </div>
       {/if}
     </div>
+
+    <!-- Footer -->
     <div class="[view-transition-name:app-footer]">
       <p class="mt-8 text-center text-sm text-base-content/50">
         {m.footer_privacy_text()}
