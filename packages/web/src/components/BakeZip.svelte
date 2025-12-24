@@ -454,7 +454,7 @@
                   class="text-base-content size-14"
                 />
                 {#if selectedFile}
-                  <div class="text-base-content/70 pt-2">
+                  <div lang="" class="text-base-content/70 pt-2">
                     {selectedFile.name}
                   </div>
                   <div class="pt-1 text-sm text-base-content/50">
@@ -756,8 +756,9 @@
                               </span>
                             </td>
                             <td
-                              class="min-w-40 truncate group-data-[category=error]:text-error group-data-[category=metadata]:text-info"
+                              lang={entry.filename.decoded ? "" : undefined}
                               title={entry.filename.decoded?.string}
+                              class="min-w-40 truncate group-data-[category=error]:text-error group-data-[category=metadata]:text-info"
                             >
                               {#if entry.filename.decoded}
                                 {entry.filename.decoded.string}
