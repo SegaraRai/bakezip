@@ -2,7 +2,6 @@
   import init, {
     ZipProcessor,
     type InspectedArchive,
-    type ZipWarning,
     type CompatibilityLevel,
     type FieldSelectionStrategy,
     type EncodingSelectionStrategy,
@@ -46,9 +45,7 @@
   const compatibility = $derived.by(
     (): CompatibilityLevel | null => processor?.compatibility ?? null,
   );
-  const warnings = $derived.by(
-    (): ZipWarning[] => processor?.get_warnings() ?? [],
-  );
+  const warnings = $derived.by(() => processor?.get_warnings() ?? []);
 
   // Options for Step2
   let encoding = $state("__PreferOverallDetected");
@@ -501,26 +498,28 @@
               aria-live="polite"
               class="alert alert-soft alert-warning flex-col items-start"
             >
-              <div class="flex items-center gap-2">
-                <LineMdAlert class="size-10" aria-hidden="true" />
-                <h3 class="font-bold">
+              <LineMdAlert class="size-10" aria-hidden="true" />
+              <div class="w-full">
+                <h3 class="font-bold mb-1">
                   {m.step1_warnings_title({ count: warnings.length })}
                 </h3>
+                <div class="overflow-y-auto max-h-38">
+                  <ul class="list-disc list-inside text-sm">
+                    {#each warnings as warning}
+                      <li>
+                        {#if warning.index !== null && warning.index !== undefined}
+                          <span class="[font-feature-settings:tnum]">
+                            {m.step1_warning_entry_prefix({
+                              index: warning.index,
+                            })}
+                          </span>
+                        {/if}
+                        <span>{warning.message}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                </div>
               </div>
-              <ul class="list-disc list-inside text-sm">
-                {#each warnings as warning}
-                  <li>
-                    {#if warning.index !== null && warning.index !== undefined}
-                      <span class="[font-feature-settings:tnum] min-w-30"
-                        >{m.step1_warning_entry_prefix({
-                          index: warning.index,
-                        })}</span
-                      >
-                    {/if}
-                    {warning.message}
-                  </li>
-                {/each}
-              </ul>
             </div>
           {/if}
 
