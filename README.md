@@ -21,6 +21,15 @@ BakeZip is built with a Rust core compiled to WebAssembly, wrapped in a modern w
 - **Frontend**: Astro, Svelte, TailwindCSS
 - **WASM**: wasm-bindgen
 
+### Scripts
+
+- `pnpm dev`: Start the web development server. Run `pnpm build:wasm` first to build the WASM core.
+- `pnpm build`: Build both the WASM core and the web application.
+- `pnpm build:wasm`: Build only the WASM core.
+- `pnpm build:web`: Build only the web application.
+- `pnpm check`: Run type checking and Svelte checks.
+- `pnpm preview`: Preview the production build locally.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
