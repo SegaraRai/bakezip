@@ -1,5 +1,5 @@
 ---
-import "../global.css";
+import { ClientRouter } from "astro:transitions";
 import {
   createI18n,
   type Locale,
@@ -10,6 +10,8 @@ import ThemeSelector from "../components/ThemeSelector.svelte";
 import LanguageSelector from "../components/LanguageSelector.svelte";
 import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
 import { commitHash } from "../buildInfo.macro.ts" with { type: "macro" };
+
+import "../global.css";
 
 interface Props {
   locale: Locale;
@@ -74,8 +76,16 @@ const alternateLinks = LOCALES.map((l) => ({
           theme = { light: "winter", dark: "night" }[theme] ?? theme;
         } catch {}
         document.documentElement.dataset.theme = theme;
+
+        document.addEventListener("astro:before-swap", (event) => {
+          event.newDocument.documentElement.dataset.theme =
+            document.documentElement.dataset.theme;
+        });
       })();
     </script>
+    <ClientRouter />
+    {/* Commit Hash */}
+    <Fragment set:html={`<!--#${commitHash}-->`} />
   </head>
   <body class:list={Astro.props.bodyClass}>
     <a
@@ -87,6 +97,7 @@ const alternateLinks = LOCALES.map((l) => ({
       class="fixed top-0 right-0 px-6 py-4 flex gap-2 justify-end z-50 not-lg:w-full bg-base-300/75 backdrop-blur-sm lg:rounded-bl-md"
     >
       <a
+        transition:name="github-repo"
         title={m.github_repo()}
         href="https://github.com/SegaraRai/bakezip"
         target="_blank"
@@ -99,6 +110,7 @@ const alternateLinks = LOCALES.map((l) => ({
       {
         !noShare && (
           <a
+            transition:name="share-button"
             title={m.share_on_x()}
             href={`https://x.com/intent/tweet?text=${encodeURIComponent(m.share_text({ url: Astro.url }))}`}
             target="_blank"
@@ -116,12 +128,17 @@ const alternateLinks = LOCALES.map((l) => ({
       {
         !noTranslate && (
           <LanguageSelector
+            transition:name="language-selector"
             currentLocale={locale}
             pathname={Astro.url.pathname}
           />
         )
       }
-      <ThemeSelector client:idle={{ timeout: 500 }} locale={locale} />
+      <ThemeSelector
+        client:idle={{ timeout: 500 }}
+        transition:name="theme-selector"
+        locale={locale}
+      />
     </header>
     {
       !noTranslate && (
@@ -140,5 +157,4 @@ const alternateLinks = LOCALES.map((l) => ({
       <div class="w-full h-18"></div>
     </main>
   </body>
-  <Fragment set:html={`<!--#${commitHash}-->`} />
 </html>

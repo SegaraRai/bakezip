@@ -422,7 +422,7 @@
         id="step1"
         role="region"
         aria-labelledby="step1-title"
-        class="card bg-base-100 shadow-xl"
+        class="card bg-base-100 shadow-xl [view-transition-name:step1]"
       >
         <div class="card-body">
           <div id="step1-title" class="mb-4 flex items-center gap-3">
@@ -574,7 +574,7 @@
           id="step2"
           role="region"
           aria-labelledby="step2-title"
-          class="card bg-base-100 shadow-xl"
+          class="card bg-base-100 shadow-xl [view-transition-name:step2]"
         >
           <div class="card-body">
             <button
@@ -853,7 +853,7 @@
           id="step3"
           role="region"
           aria-labelledby="step3-title"
-          class="card bg-base-100 shadow-xl"
+          class="card bg-base-100 shadow-xl [view-transition-name:step3]"
         >
           <div class="card-body">
             <div id="step3-title" class="mb-4 flex items-center gap-3">
@@ -953,7 +953,7 @@
         </div>
       {/if}
     </div>
-    <div>
+    <div class="[view-transition-name:app-footer]">
       <p class="mt-8 text-center text-sm text-base-content/50">
         {m.footer_privacy_text()}
         <a href="/privacy" hreflang="en" class="link link-hover"
