@@ -3,6 +3,7 @@ import { paraglideVitePlugin } from "@inlang/paraglide-js";
 import playformCompress from "@playform/compress";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
+import macros from "unplugin-macros/vite";
 import { baseLocale, locales } from "./project.inlang/settings.json";
 
 // https://astro.build/config
@@ -67,6 +68,7 @@ export default defineConfig({
   ],
   vite: {
     plugins: [
+      macros(),
       paraglideVitePlugin({
         project: "./project.inlang",
         outdir: "./src/paraglide",
