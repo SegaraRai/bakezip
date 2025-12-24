@@ -34,7 +34,7 @@ const description = m.seo_page_description();
 const alternateLinks = LOCALES.map((l) => ({
   href: new URL(getLocalizedPath(Astro.url.pathname, l.code), Astro.url),
   hreflang: l.code,
-})).filter((link) => link.hreflang !== locale);
+}));
 ---
 
 <!doctype html>

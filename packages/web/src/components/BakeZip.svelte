@@ -868,7 +868,11 @@
             <div class="space-y-4">
               {#if hasOSMetadataFiles}
                 <div class="space-y-2">
-                  <div role="status" aria-live="polite" class="alert alert-info">
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    class="alert alert-info"
+                  >
                     <LineMdAlertCircle aria-hidden="true" class="size-10" />
                     <div>
                       <h3 class="font-bold">
@@ -952,7 +956,7 @@
     <div>
       <p class="mt-8 text-center text-sm text-base-content/50">
         {m.footer_privacy_text()}
-        <a href="/privacy" class="link link-hover"
+        <a href="/privacy" hreflang="en" class="link link-hover"
           >{m.footer_privacy_link()}</a
         >
       </p>

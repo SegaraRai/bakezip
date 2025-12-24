@@ -55,6 +55,7 @@
         <li>
           <a
             href={getLocalizedPath(pathname, locale.code)}
+            hreflang={locale.code}
             lang={locale.code}
             class:active={locale.code === currentLocale}
           >
