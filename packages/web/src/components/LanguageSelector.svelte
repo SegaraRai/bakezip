@@ -18,7 +18,10 @@
   const m = $derived.by(() => createI18n(currentLocale));
 </script>
 
-<div class="dropdown dropdown-end" translate="no">
+<div
+  translate="no"
+  class="dropdown dropdown-end [view-transition-name:language-selector]"
+>
   <div
     role="button"
     aria-label={m.language_selector_label()}

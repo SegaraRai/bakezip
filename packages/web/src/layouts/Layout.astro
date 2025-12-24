@@ -128,17 +128,12 @@ const alternateLinks = LOCALES.map((l) => ({
       {
         !noTranslate && (
           <LanguageSelector
-            transition:name="language-selector"
             currentLocale={locale}
             pathname={Astro.url.pathname}
           />
         )
       }
-      <ThemeSelector
-        client:idle={{ timeout: 500 }}
-        transition:name="theme-selector"
-        locale={locale}
-      />
+      <ThemeSelector client:idle={{ timeout: 500 }} locale={locale} />
     </header>
     {
       !noTranslate && (

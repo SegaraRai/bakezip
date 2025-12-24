@@ -79,7 +79,7 @@
   }
 </script>
 
-<div class="dropdown dropdown-end">
+<div class="dropdown dropdown-end [view-transition-name:theme-selector]">
   <div
     role="button"
     aria-label={m.theme_selector_label()}
