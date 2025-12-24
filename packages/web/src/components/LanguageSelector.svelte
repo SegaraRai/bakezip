@@ -24,7 +24,7 @@
     aria-label={m.language_selector_label()}
     title={m.language_selector_label()}
     tabindex="0"
-    class="btn btn-ghost btn-sm m-1"
+    class="btn btn-sm btn-ghost"
   >
     <span aria-hidden="true" class="icon-[mdi--translate] text-xl"></span>
     <span

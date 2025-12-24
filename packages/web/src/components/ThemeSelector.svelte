@@ -85,7 +85,7 @@
     aria-label={m.theme_selector_label()}
     title={m.theme_selector_label()}
     tabindex="0"
-    class="btn btn-ghost btn-circle"
+    class="btn btn-sm btn-ghost btn-circle"
   >
     <span aria-hidden="true" class="icon-[mdi--theme-light-dark] text-xl"
     ></span>
