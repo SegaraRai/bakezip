@@ -431,7 +431,7 @@
             <h2 class="card-title text-2xl">{m.step1_title()}</h2>
           </div>
 
-          <!-- File Upload Section -->
+          <!-- File Select Section -->
           <div class="mb-4">
             <p class="mb-3 text-sm text-base-content/70">
               {m.step1_info()}
@@ -771,13 +771,19 @@
                             <td
                               class="w-50 group-data-[encoding-mismatch=true]:text-warning"
                             >
-                              {entry.filename.decoded?.encoding_used ??
-                                m.step2_table_encoding_na()}
+                              <span
+                                lang={entry.filename.decoded ? "en" : undefined}
+                              >
+                                {entry.filename.decoded?.encoding_used ??
+                                  m.step2_table_encoding_na()}
+                              </span>
                               {#if entry.filename.detected_encoding && entry.filename.detected_encoding !== entry.filename.decoded?.encoding_used}
-                                ({entry.filename.detected_encoding})
+                                <span lang="en">
+                                  ({entry.filename.detected_encoding})
+                                </span>
                               {/if}
                             </td>
-                            <td class="w-40 text-base-content/70">
+                            <td lang="en" class="w-40 text-base-content/70">
                               {entry.filename.kind}
                             </td>
                             <td class="w-30 text-center">
