@@ -479,7 +479,7 @@
                 aria-hidden="true"
                 class="size-10 icon-[mdi--hourglass] not-motion-reduce:hidden"
               ></span>
-              <span>{m.step1_processing()}</span>
+              <p>{m.step1_processing()}</p>
             </div>
           {/if}
 
@@ -487,7 +487,7 @@
           {#if error}
             <div role="alert" class="alert alert-error">
               <LineMdCloseCircle class="size-10" aria-hidden="true" />
-              <span>{error}</span>
+              <p lang="en">{error}</p>
             </div>
           {/if}
 
@@ -514,7 +514,7 @@
                             })}
                           </span>
                         {/if}
-                        <span>{warning.message}</span>
+                        <span lang="en">{warning.message}</span>
                       </li>
                     {/each}
                   </ul>
