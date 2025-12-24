@@ -5,6 +5,8 @@
     type EncodingSelectionStrategy,
     type FieldSelectionStrategy,
     type InspectedArchive,
+    type WaveDashHandling,
+    type WaveDashNormalization,
   } from "bakezip";
   import LineMdAlert from "../icons/LineMdAlert.svelte";
   import LineMdAlertCircle from "../icons/LineMdAlertCircle.svelte";
@@ -47,11 +49,40 @@
   );
   const warnings = $derived.by(() => processor?.get_warnings() ?? []);
 
+  const waveDashOptions = $derived.by(() => {
+    if (!inspectedArchive) {
+      return null;
+    }
+
+    if (
+      inspectedArchive.contains_sjis_wave_dash &&
+      (inspectedArchive.contains_other_wave_dash ||
+        inspectedArchive.contains_other_fullwidth_tilde)
+    ) {
+      return "both";
+    }
+
+    if (inspectedArchive.contains_sjis_wave_dash) {
+      return "shift_jis";
+    }
+
+    if (
+      inspectedArchive.contains_other_wave_dash ||
+      inspectedArchive.contains_other_fullwidth_tilde
+    ) {
+      return "non_shift_jis";
+    }
+
+    return null;
+  });
+
   // Options for Step2
   let encoding = $state("__PreferOverallDetected");
   let fieldSelection = $state<FieldSelectionStrategy>(
     "CdhUnicodeThenLfhUnicodeThenCdh",
   );
+  let waveDashHandling = $state<WaveDashHandling>("DecodeToFullwidthTilde");
+  let waveDashNormalization = $state<WaveDashNormalization>("Preserve");
   let forceProceedToStep2 = $state(false);
   let expandStep2 = $state(false);
 
@@ -235,6 +266,27 @@
     }
   }
 
+  function getFinalWaveDashOptions(
+    archive: InspectedArchive,
+  ): readonly [WaveDashHandling, WaveDashNormalization] {
+    if (
+      archive.contains_other_wave_dash ||
+      archive.contains_other_fullwidth_tilde
+    ) {
+      // If the archive contains non-SJIS wave dash or fullwidth tilde, we must use waveDashNormalization setting
+      return [
+        waveDashNormalization === "NormalizeToWaveDash"
+          ? "DecodeToWaveDash"
+          : "DecodeToFullwidthTilde",
+        waveDashNormalization,
+      ];
+    }
+
+    // Otherwise, we can use waveDashHandling setting
+    // WaveDashNormalization can be any value since it won't affect anything
+    return [waveDashHandling, "Preserve"];
+  }
+
   async function processZip() {
     if (!selectedFile) {
       error = m.step1_error_no_file();
@@ -294,6 +346,9 @@
         field_selection_strategy: fieldSelection,
         ignore_crc32_mismatch: false,
         needs_original_bytes: false,
+        // During inspection, we have to use fixed options to detect wave dash correctly
+        wave_dash_handling: "DecodeToFullwidthTilde",
+        wave_dash_normalization: "Preserve",
       });
       const elapsed = performance.now() - ts;
       console.info(`Inspected archive in ${elapsed} ms`);
@@ -306,6 +361,41 @@
           result.entries.some(
             (entry) => entry.filename.decoded?.has_errors !== false,
           );
+      }
+
+      if (
+        result.contains_sjis_wave_dash &&
+        (result.contains_other_wave_dash ||
+          result.contains_other_fullwidth_tilde) &&
+        waveDashNormalization === "Preserve"
+      ) {
+        // If the archive contains both SJIS wave dash and other wave dash/fullwidth tilde, we cannot use "Preserve" mode
+        // since we need to select either character for SJIS entries.
+        waveDashNormalization = "NormalizeToFullwidthTilde";
+      }
+
+      if (
+        !result.contains_sjis_wave_dash &&
+        (result.contains_other_wave_dash ||
+          result.contains_other_fullwidth_tilde)
+      ) {
+        if (
+          waveDashNormalization === "NormalizeToFullwidthTilde" &&
+          !result.contains_other_wave_dash
+        ) {
+          // If there is no SJIS wave dash, and there is no non-SJIS wave dash,
+          // we cannot use "NormalizeToFullwidthTilde" mode since it has no effect.
+          waveDashNormalization = "Preserve";
+        }
+
+        if (
+          waveDashNormalization === "NormalizeToWaveDash" &&
+          !result.contains_other_fullwidth_tilde
+        ) {
+          // If there is no SJIS wave dash, and there is no non-SJIS fullwidth tilde,
+          // we cannot use "NormalizeToWaveDash" mode since it has no effect.
+          waveDashNormalization = "Preserve";
+        }
       }
 
       inspectedArchive = result;
@@ -345,12 +435,18 @@
             )
             .filter((index): index is bigint => index != null)
         : [];
+
+      const [finalWaveDashHandling, finalWaveDashNormalization] =
+        getFinalWaveDashOptions(inspectedArchive);
+
       const rebuiltBlob = await processor.rebuild(
         {
           encoding: getEncodingStrategy(encoding),
           field_selection_strategy: fieldSelection,
           ignore_crc32_mismatch: false,
           needs_original_bytes: false,
+          wave_dash_handling: finalWaveDashHandling,
+          wave_dash_normalization: finalWaveDashNormalization,
         },
         new BigUint64Array(omitEntries),
       );
@@ -672,6 +768,75 @@
                   {m.step2_field_selection_note()}
                 </p>
               </fieldset>
+
+              <!-- Wave Dash Options -->
+              {#if waveDashOptions === "shift_jis"}
+                <fieldset class="fieldset group-data-[expanded=false]:hidden">
+                  <legend class="fieldset-legend text-sm">
+                    {m.option_wave_dash_handling()}
+                  </legend>
+                  <select
+                    class="select w-full"
+                    bind:value={waveDashHandling}
+                    onchange={inspectArchive}
+                    disabled={!!busy}
+                  >
+                    <option value="DecodeToFullwidthTilde">
+                      {m.option_wd_fullwidth_tilde_default()}
+                    </option>
+                    <option value="DecodeToWaveDash">
+                      {m.option_wd_wave_dash()}
+                    </option>
+                  </select>
+                </fieldset>
+              {:else if waveDashOptions === "non_shift_jis"}
+                <fieldset class="fieldset group-data-[expanded=false]:hidden">
+                  <legend class="fieldset-legend text-sm">
+                    {m.option_wave_dash_normalization()}
+                  </legend>
+                  <select
+                    class="select w-full"
+                    bind:value={waveDashNormalization}
+                    onchange={inspectArchive}
+                    disabled={!!busy}
+                  >
+                    <option value="Preserve">
+                      {m.option_wd_preserve_default()}
+                    </option>
+                    <option
+                      value="NormalizeToFullwidthTilde"
+                      disabled={!inspectedArchive?.contains_other_wave_dash}
+                    >
+                      {m.option_wd_unify_fullwidth_tilde()}
+                    </option>
+                    <option
+                      value="NormalizeToWaveDash"
+                      disabled={!inspectedArchive?.contains_other_fullwidth_tilde}
+                    >
+                      {m.option_wd_unify_wave_dash()}
+                    </option>
+                  </select>
+                </fieldset>
+              {:else if waveDashOptions === "both"}
+                <fieldset class="fieldset group-data-[expanded=false]:hidden">
+                  <legend class="fieldset-legend text-sm">
+                    {m.option_wave_dash_normalization()}
+                  </legend>
+                  <select
+                    class="select w-full"
+                    bind:value={waveDashNormalization}
+                    onchange={inspectArchive}
+                    disabled={!!busy}
+                  >
+                    <option value="NormalizeToFullwidthTilde">
+                      {m.option_wd_unify_fullwidth_tilde_default()}
+                    </option>
+                    <option value="NormalizeToWaveDash">
+                      {m.option_wd_unify_wave_dash()}
+                    </option>
+                  </select>
+                </fieldset>
+              {/if}
 
               <!-- Decoded Filenames Preview -->
               {#if inspectedArchive}

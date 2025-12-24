@@ -25,6 +25,45 @@ pub struct InspectConfig {
     pub ignore_crc32_mismatch: bool,
     /// Whether to require original bytes for inspected filename fields
     pub needs_original_bytes: bool,
+    /// How to handle Wave Dash (U+301C) when decoding from Shift_JIS
+    #[serde(default)]
+    pub wave_dash_handling: WaveDashHandling,
+    /// How to normalize Wave Dash (U+301C) and Fullwidth Tilde (U+FF5E)
+    #[serde(default)]
+    pub wave_dash_normalization: WaveDashNormalization,
+}
+
+/// Strategy for handling Wave Dash when decoding from Shift_JIS
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+pub enum WaveDashHandling {
+    #[default]
+    DecodeToFullwidthTilde,
+    DecodeToWaveDash,
+}
+
+/// Strategy for normalizing Wave Dash and Fullwidth Tilde
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    derive(tsify::Tsify)
+)]
+#[cfg_attr(
+    all(target_arch = "wasm32", target_os = "unknown"),
+    tsify(into_wasm_abi, from_wasm_abi)
+)]
+pub enum WaveDashNormalization {
+    #[default]
+    Preserve,
+    NormalizeToFullwidthTilde,
+    NormalizeToWaveDash,
 }
 
 /// Strategy for selecting which filename field to use
@@ -95,6 +134,12 @@ pub struct InspectedArchive {
     /// None if detection failed or an error occurred during decoding
     /// If present, this encoding can be used to decode all filenames in the archive without errors
     pub overall_encoding: Option<String>,
+    /// Whether the archive contains entries encoded in Shift_JIS that have Wave Dash or Fullwidth Tilde
+    pub contains_sjis_wave_dash: bool,
+    /// Whether the archive contains entries NOT encoded in Shift_JIS that have Wave Dash
+    pub contains_other_wave_dash: bool,
+    /// Whether the archive contains entries NOT encoded in Shift_JIS that have Fullwidth Tilde
+    pub contains_other_fullwidth_tilde: bool,
 }
 
 /// Inspected ZIP file entry
@@ -348,13 +393,18 @@ impl InspectedArchive {
                 };
 
                 let decoded = encoding.and_then(|enc| {
-                    decode_with_encoding(predetect.original_bytes, enc.encoding(), true).map(
-                        |(string, has_errors, encoding_used)| DecodedString {
-                            string,
-                            has_errors,
-                            encoding_used: encoding_used.name().to_string(),
-                        },
+                    decode_with_encoding(
+                        predetect.original_bytes,
+                        enc.encoding(),
+                        true,
+                        config.wave_dash_handling,
+                        config.wave_dash_normalization,
                     )
+                    .map(|(string, has_errors, encoding_used)| DecodedString {
+                        string,
+                        has_errors,
+                        encoding_used: encoding_used.name().to_string(),
+                    })
                 });
 
                 let original_bytes = if config.needs_original_bytes {
@@ -373,7 +423,6 @@ impl InspectedArchive {
             })
             .zip(zip_file.entries.iter())
             .map(|(filename_field, entry)| InspectedEntry {
-                filename: filename_field,
                 uncompressed_size: entry
                     .cdh
                     .zip64
@@ -384,12 +433,39 @@ impl InspectedArchive {
                     .zip64
                     .and_then(|z| z.compressed_size)
                     .unwrap_or(entry.cdh.compressed_size as u64),
+                filename: filename_field,
             })
             .collect::<Vec<_>>();
+
+        let mut contains_sjis_wave_dash = false;
+        let mut contains_other_wave_dash = false;
+        let mut contains_other_fullwidth_tilde = false;
+
+        for entry in &entries {
+            if let Some(decoded) = &entry.filename.decoded {
+                let has_wd = decoded.string.contains('\u{301C}');
+                let has_ft = decoded.string.contains('\u{FF5E}');
+                if has_wd || has_ft {
+                    let encoding = &decoded.encoding_used;
+                    let is_sjis = encoding == "Shift_JIS";
+
+                    if is_sjis {
+                        contains_sjis_wave_dash = true;
+                    } else if has_wd {
+                        contains_other_wave_dash = true;
+                    } else if has_ft {
+                        contains_other_fullwidth_tilde = true;
+                    }
+                }
+            }
+        }
 
         Ok(Self {
             overall_encoding: overall_encoding.map(|e| e.name().to_string()),
             entries,
+            contains_sjis_wave_dash,
+            contains_other_wave_dash,
+            contains_other_fullwidth_tilde,
         })
     }
 }
@@ -399,10 +475,32 @@ fn decode_with_encoding(
     data: &[u8],
     encoding: &'static Encoding,
     force: bool,
+    wave_dash_handling: WaveDashHandling,
+    normalization: WaveDashNormalization,
 ) -> Option<(String, bool, &'static Encoding)> {
     let (result, encoding_used, has_errors) = encoding.decode(data);
     if force || !has_errors {
-        Some((result.into_owned(), has_errors, encoding_used))
+        let mut string = result.into_owned();
+
+        // Handle Shift_JIS specific wave dash handling
+        if encoding_used.name() == "Shift_JIS"
+            && matches!(wave_dash_handling, WaveDashHandling::DecodeToWaveDash)
+        {
+            string = string.replace('\u{FF5E}', "\u{301C}");
+        }
+
+        // Apply normalization
+        match normalization {
+            WaveDashNormalization::NormalizeToFullwidthTilde => {
+                string = string.replace('\u{301C}', "\u{FF5E}");
+            }
+            WaveDashNormalization::NormalizeToWaveDash => {
+                string = string.replace('\u{FF5E}', "\u{301C}");
+            }
+            WaveDashNormalization::Preserve => {}
+        }
+
+        Some((string, has_errors, encoding_used))
     } else {
         None
     }
@@ -429,8 +527,13 @@ fn detect_encoding(data: &[u8]) -> Option<EncodingOrAscii> {
     detector.feed(data, true);
 
     let detected_encoding = detector.guess(None, true);
-    if let Some((_, has_errors, encoding)) = decode_with_encoding(data, detected_encoding, false)
-        && !has_errors
+    if let Some((_, has_errors, encoding)) = decode_with_encoding(
+        data,
+        detected_encoding,
+        false,
+        WaveDashHandling::default(),
+        WaveDashNormalization::default(),
+    ) && !has_errors
     {
         return Some(EncodingOrAscii::Encoding(encoding));
     }
@@ -563,6 +666,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = InspectedArchive::inspect(&zip, &config);
         assert!(result.is_ok());
@@ -582,6 +687,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = InspectedArchive::inspect(&zip, &config);
         assert!(result.is_ok());
@@ -595,7 +702,7 @@ mod tests {
 
     #[test]
     fn test_inspect_sjis_entry() {
-        // "テスト.txt" in Shift-JIS
+        // "テスト.txt" in Shift_JIS
         let sjis_bytes = b"\x83\x65\x83\x58\x83\x67.txt";
         let entry = create_mock_entry(sjis_bytes, false, None);
         let zip = create_mock_zip(vec![entry]);
@@ -607,6 +714,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = InspectedArchive::inspect(&zip, &config);
         assert!(result.is_ok());
@@ -640,6 +749,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::CdhUnicodeThenCdh,
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = InspectedArchive::inspect(&zip, &config);
         assert!(result.is_ok());
@@ -655,7 +766,7 @@ mod tests {
 
     #[test]
     fn test_inspect_force_encoding() {
-        // "テスト.txt" in Shift-JIS
+        // "テスト.txt" in Shift_JIS
         let sjis_bytes = b"\x83\x65\x83\x58\x83\x67.txt";
         let entry = create_mock_entry(sjis_bytes, false, None);
         let zip = create_mock_zip(vec![entry]);
@@ -667,6 +778,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = InspectedArchive::inspect(&zip, &config);
         assert!(result.is_ok());
@@ -678,5 +791,173 @@ mod tests {
             filename.decoded.as_ref().unwrap().encoding_used,
             "Shift_JIS"
         );
+    }
+
+    #[test]
+    fn test_sjis_wave_dash_behavior() {
+        // Wave Dash in Shift_JIS is 0x8160
+        let sjis_bytes = b"\x81\x60";
+
+        // Default behavior (DecodeToFullwidthTilde)
+        let config_default = InspectConfig {
+            encoding: EncodingSelectionStrategy::ForceSpecified {
+                encoding: "Shift_JIS".to_string(),
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::DecodeToFullwidthTilde,
+            wave_dash_normalization: WaveDashNormalization::Preserve,
+        };
+
+        let entry = create_mock_entry(sjis_bytes, false, None);
+        let zip = create_mock_zip(vec![entry.clone()]);
+
+        let result = InspectedArchive::inspect(&zip, &config_default).unwrap();
+        let decoded = result.entries[0]
+            .filename
+            .decoded
+            .as_ref()
+            .unwrap()
+            .string
+            .as_str();
+        assert_eq!(decoded, "\u{FF5E}"); // Fullwidth Tilde
+        assert!(result.contains_sjis_wave_dash);
+
+        // DecodeToWaveDash
+        let config_wave_dash = InspectConfig {
+            encoding: EncodingSelectionStrategy::ForceSpecified {
+                encoding: "Shift_JIS".to_string(),
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::DecodeToWaveDash,
+            wave_dash_normalization: WaveDashNormalization::Preserve,
+        };
+
+        let result = InspectedArchive::inspect(&zip, &config_wave_dash).unwrap();
+        let decoded = result.entries[0]
+            .filename
+            .decoded
+            .as_ref()
+            .unwrap()
+            .string
+            .as_str();
+        assert_eq!(decoded, "\u{301C}"); // Wave Dash
+        assert!(result.contains_sjis_wave_dash);
+    }
+
+    #[test]
+    fn test_wave_dash_normalization() {
+        // U+301C Wave Dash
+        let wave_dash_str = "\u{301C}";
+        let entry_wd = create_mock_entry(wave_dash_str.as_bytes(), true, None);
+
+        // U+FF5E Fullwidth Tilde
+        let fullwidth_tilde_str = "\u{FF5E}";
+        let entry_ft = create_mock_entry(fullwidth_tilde_str.as_bytes(), true, None);
+
+        let zip = create_mock_zip(vec![entry_wd, entry_ft]);
+
+        // NormalizeToFullwidthTilde
+        let config_norm_ft = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::NormalizeToFullwidthTilde,
+        };
+
+        let result = InspectedArchive::inspect(&zip, &config_norm_ft).unwrap();
+        assert_eq!(
+            result.entries[0].filename.decoded.as_ref().unwrap().string,
+            "\u{FF5E}"
+        );
+        assert_eq!(
+            result.entries[1].filename.decoded.as_ref().unwrap().string,
+            "\u{FF5E}"
+        );
+
+        // NormalizeToWaveDash
+        let config_norm_wd = InspectConfig {
+            encoding: EncodingSelectionStrategy::EntryDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::NormalizeToWaveDash,
+        };
+
+        let result = InspectedArchive::inspect(&zip, &config_norm_wd).unwrap();
+        assert_eq!(
+            result.entries[0].filename.decoded.as_ref().unwrap().string,
+            "\u{301C}"
+        );
+        assert_eq!(
+            result.entries[1].filename.decoded.as_ref().unwrap().string,
+            "\u{301C}"
+        );
+    }
+
+    #[test]
+    fn test_inspect_other_wave_dash() {
+        // UTF-8 Wave Dash (U+301C)
+        let wave_dash_str = "\u{301C}";
+        let entry = create_mock_entry(wave_dash_str.as_bytes(), true, None);
+        let zip = create_mock_zip(vec![entry]);
+
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::PreferOverallDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::Preserve,
+        };
+
+        let result = InspectedArchive::inspect(&zip, &config).unwrap();
+
+        assert!(result.contains_other_wave_dash);
+        assert!(!result.contains_other_fullwidth_tilde);
+        assert!(!result.contains_sjis_wave_dash);
+    }
+
+    #[test]
+    fn test_inspect_other_fullwidth_tilde() {
+        // UTF-8 Wave Dash (U+301C)
+        let wave_dash_str = "\u{FF5E}";
+        let entry = create_mock_entry(wave_dash_str.as_bytes(), true, None);
+        let zip = create_mock_zip(vec![entry]);
+
+        let config = InspectConfig {
+            encoding: EncodingSelectionStrategy::PreferOverallDetected {
+                fallback_encoding: None,
+                ignore_utf8_flag: false,
+            },
+            field_selection_strategy: FieldSelectionStrategy::default(),
+            ignore_crc32_mismatch: false,
+            needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::Preserve,
+        };
+
+        let result = InspectedArchive::inspect(&zip, &config).unwrap();
+
+        assert!(result.contains_other_fullwidth_tilde);
+        assert!(!result.contains_other_wave_dash);
+        assert!(!result.contains_sjis_wave_dash);
     }
 }

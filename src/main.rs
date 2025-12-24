@@ -5,7 +5,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use bakezip::zip::{
     compatibility::CompatibilityLevel,
-    inspect::{EncodingSelectionStrategy, FieldSelectionStrategy, InspectConfig, InspectedArchive},
+    inspect::{
+        EncodingSelectionStrategy, FieldSelectionStrategy, InspectConfig, InspectedArchive,
+        WaveDashHandling, WaveDashNormalization,
+    },
     parse::{ZipFile, ZipReader},
     rebuild::{RebuildChunk, rebuild},
 };
@@ -38,6 +41,14 @@ struct Cli {
     /// Ignore CRC32 mismatch in UTF-8 extra fields
     #[arg(long, global = true)]
     ignore_crc32_mismatch: bool,
+
+    /// How to handle Wave Dash (U+301C) when decoding from Shift_JIS
+    #[arg(long, global = true, value_enum, default_value_t = WaveDashHandlingArg::DecodeToFullwidthTilde)]
+    wave_dash_handling: WaveDashHandlingArg,
+
+    /// How to normalize Wave Dash (U+301C) and Fullwidth Tilde (U+FF5E)
+    #[arg(long, global = true, value_enum, default_value_t = WaveDashNormalizationArg::Preserve)]
+    wave_dash_normalization: WaveDashNormalizationArg,
 }
 
 #[derive(Subcommand)]
@@ -78,6 +89,42 @@ enum FieldSelectionStrategyArg {
     LfhUnicodeThenLfh,
     #[clap(name = "lfh")]
     LfhOnly,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum WaveDashHandlingArg {
+    DecodeToFullwidthTilde,
+    DecodeToWaveDash,
+}
+
+impl From<WaveDashHandlingArg> for WaveDashHandling {
+    fn from(arg: WaveDashHandlingArg) -> Self {
+        match arg {
+            WaveDashHandlingArg::DecodeToFullwidthTilde => WaveDashHandling::DecodeToFullwidthTilde,
+            WaveDashHandlingArg::DecodeToWaveDash => WaveDashHandling::DecodeToWaveDash,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum WaveDashNormalizationArg {
+    Preserve,
+    NormalizeToFullwidthTilde,
+    NormalizeToWaveDash,
+}
+
+impl From<WaveDashNormalizationArg> for WaveDashNormalization {
+    fn from(arg: WaveDashNormalizationArg) -> Self {
+        match arg {
+            WaveDashNormalizationArg::Preserve => WaveDashNormalization::Preserve,
+            WaveDashNormalizationArg::NormalizeToFullwidthTilde => {
+                WaveDashNormalization::NormalizeToFullwidthTilde
+            }
+            WaveDashNormalizationArg::NormalizeToWaveDash => {
+                WaveDashNormalization::NormalizeToWaveDash
+            }
+        }
+    }
 }
 
 impl From<FieldSelectionStrategyArg> for FieldSelectionStrategy {
@@ -190,6 +237,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         field_selection_strategy: cli.field.into(),
         ignore_crc32_mismatch: cli.ignore_crc32_mismatch,
         needs_original_bytes: false,
+        wave_dash_handling: cli.wave_dash_handling.into(),
+        wave_dash_normalization: cli.wave_dash_normalization.into(),
     };
 
     match cli.command.unwrap_or(Commands::Inspect) {
@@ -203,6 +252,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Compatibility: {compatibility:?}");
 
             println!("Entries: {}", inspected.entries.len());
+            if inspected.contains_sjis_wave_dash {
+                println!("Contains Shift_JIS Wave Dash/Fullwidth Tilde");
+            }
+            if inspected.contains_other_wave_dash {
+                println!("Contains Wave Dash (Non-Shift_JIS)");
+            }
+            if inspected.contains_other_fullwidth_tilde {
+                println!("Contains Fullwidth Tilde (Non-Shift_JIS)");
+            }
+
             for (i, entry) in inspected.entries.iter().enumerate() {
                 let filename = entry
                     .filename
@@ -210,6 +269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .as_ref()
                     .map(|d| d.string.as_str())
                     .unwrap_or("<decoding failed>");
+
                 println!("{i}: {filename}");
             }
         }

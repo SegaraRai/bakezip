@@ -314,8 +314,8 @@ mod tests {
 
     #[test]
     fn test_compatibility_other() {
-        // Non-UTF-8 without UTF-8 flag (e.g. Shift-JIS)
-        // "テスト" in Shift-JIS is 83 65 83 58 83 67
+        // Non-UTF-8 without UTF-8 flag (e.g. Shift_JIS)
+        // "テスト" in Shift_JIS is 83 65 83 58 83 67
         let entry = create_mock_entry(b"\x83\x65\x83\x58\x83\x67.txt", false, None);
         let zip = create_mock_zip(vec![entry]);
         let compatibility = CompatibilityLevel::analyze(&zip);

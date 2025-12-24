@@ -4,11 +4,11 @@
 
 BakeZip is a modern tool designed to fix **mojibake** (garbled filenames) in ZIP archives. It runs entirely in your browser using WebAssembly, ensuring your files never leave your device.
 
-Common issues like ZIP files created on Windows (using legacy encodings like Shift-JIS or CP437) displaying incorrectly on macOS or Linux (which expect UTF-8) are solved instantly. BakeZip detects the correct encoding and rebuilds the archive with proper UTF-8 flags for maximum compatibility.
+Common issues like ZIP files created on Windows (using legacy encodings like Shift_JIS or CP437) displaying incorrectly on macOS or Linux (which expect UTF-8) are solved instantly. BakeZip detects the correct encoding and rebuilds the archive with proper UTF-8 flags for maximum compatibility.
 
 ## Features
 
-- **Fix Garbled Filenames**: Automatically detects and corrects character encodings (Shift-JIS, GBK, EUC-KR, etc.).
+- **Fix Garbled Filenames**: Automatically detects and corrects character encodings (Shift_JIS, GBK, EUC-KR, etc.).
 - **100% Private**: Powered by Rust and WebAssembly, all processing happens locally in your browser. No file uploads.
 - **Compatibility Analysis**: Inspects archives to identify potential cross-platform issues.
 - **Standard Compliant**: Rebuilds ZIPs with converted filenames and proper UTF-8 flags.

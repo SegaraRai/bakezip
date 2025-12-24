@@ -462,7 +462,10 @@ impl ZipSerialize for EndOfCentralDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zip::inspect::{EncodingSelectionStrategy, FieldSelectionStrategy, InspectConfig};
+    use crate::zip::inspect::{
+        EncodingSelectionStrategy, FieldSelectionStrategy, InspectConfig, WaveDashHandling,
+        WaveDashNormalization,
+    };
     use crate::zip::parse::{
         CentralDirectoryHeader, EndOfCentralDirectory, GeneralPurposeBitFlag, LocalFileHeader,
         UnicodePathExtraField, ZipFile, ZipFileEntry,
@@ -555,6 +558,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = rebuild(&zip, &config, &[]);
         assert!(result.is_ok());
@@ -576,6 +581,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         let result = rebuild(&zip, &config, &[]);
         assert!(result.is_ok());
@@ -597,6 +604,8 @@ mod tests {
             field_selection_strategy: FieldSelectionStrategy::default(),
             ignore_crc32_mismatch: false,
             needs_original_bytes: false,
+            wave_dash_handling: WaveDashHandling::default(),
+            wave_dash_normalization: WaveDashNormalization::default(),
         };
         // Omit the first entry (index 0)
         let result = rebuild(&zip, &config, &[0]);
