@@ -11,7 +11,7 @@ Common issues like ZIP files created on Windows (using legacy encodings like Shi
 - **Fix Garbled Filenames**: Automatically detects and corrects character encodings (Shift-JIS, GBK, EUC-KR, etc.).
 - **100% Private**: Powered by Rust and WebAssembly, all processing happens locally in your browser. No file uploads.
 - **Compatibility Analysis**: Inspects archives to identify potential cross-platform issues.
-- **Standard Compliant**: Rebuilds ZIPs with correct UTF-8 flags and Unicode path extra fields.
+- **Standard Compliant**: Rebuilds ZIPs with converted filenames and proper UTF-8 flags.
 
 ## Development
 
