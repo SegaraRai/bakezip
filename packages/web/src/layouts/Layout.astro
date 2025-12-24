@@ -9,6 +9,7 @@ import {
 import ThemeSelector from "../components/ThemeSelector.svelte";
 import LanguageSelector from "../components/LanguageSelector.svelte";
 import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
+import { commitHash } from "../buildInfo.macro.ts" with { type: "macro" };
 
 interface Props {
   locale: Locale;
@@ -124,11 +125,12 @@ const alternateLinks = LOCALES.map((l) => ({
       )
     }
     <main id="main-content" class:list={Astro.props.mainClass ?? "contents"}>
-      <!-- Top Padding For Fixed Header -->
+      {/* Top Padding For Fixed Header */}
       <div class="w-full h-18 lg:hidden"></div>
       <slot />
-      <!-- Bottom Padding For Language Suggestion Toast -->
+      {/* Bottom Padding For Language Suggestion Toast */}
       <div class="w-full h-18"></div>
     </main>
   </body>
+  <Fragment set:html={`<!--#${commitHash}-->`} />
 </html>
