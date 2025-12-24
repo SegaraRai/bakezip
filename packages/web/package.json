@@ -6,9 +6,9 @@
   "scripts": {
     "check": "svelte-check && astro check",
     "dev": "astro dev",
-    "build": "paraglide-js compile --project ./project.inlang --outdir ./src\\paraglide && astro build",
+    "build": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide && astro build",
     "preview": "astro preview",
-    "machine-translate": "inlang machine translate --project project.inlang"
+    "render-social": "node ./render-social.ts"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.6",
