@@ -1,20 +1,20 @@
 <script lang="ts">
   import init, {
     ZipProcessor,
-    type InspectedArchive,
     type CompatibilityLevel,
-    type FieldSelectionStrategy,
     type EncodingSelectionStrategy,
+    type FieldSelectionStrategy,
+    type InspectedArchive,
   } from "bakezip";
-  import LineMdCloseCircle from "../icons/LineMdCloseCircle.svelte";
   import LineMdAlert from "../icons/LineMdAlert.svelte";
+  import LineMdAlertCircle from "../icons/LineMdAlertCircle.svelte";
+  import LineMdCloseCircle from "../icons/LineMdCloseCircle.svelte";
   import LineMdConfirmCircle from "../icons/LineMdConfirmCircle.svelte";
-  import LineMdFolderZip from "../icons/LineMdFolderZip.svelte";
-  import LineMdDownloadLoop from "../icons/LineMdDownloadLoop.svelte";
   import LineMdDownload from "../icons/LineMdDownload.svelte";
+  import LineMdDownloadLoop from "../icons/LineMdDownloadLoop.svelte";
+  import LineMdFolderZip from "../icons/LineMdFolderZip.svelte";
   import LineMdLoadingLoop from "../icons/LineMdLoadingLoop.svelte";
   import { createI18n, type Locale } from "../lib/i18n";
-  import LineMdAlertCircle from "../icons/LineMdAlertCircle.svelte";
 
   const { locale }: { locale: Locale } = $props();
   const m = $derived.by(() => createI18n(locale));

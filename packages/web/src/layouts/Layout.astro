@@ -1,15 +1,15 @@
 ---
 import { ClientRouter } from "astro:transitions";
-import {
-  createI18n,
-  type Locale,
-  LOCALES,
-  getLocalizedPath,
-} from "../lib/i18n";
-import ThemeSelector from "../components/ThemeSelector.svelte";
+import { commitHash } from "../buildInfo.macro.ts" with { type: "macro" };
 import LanguageSelector from "../components/LanguageSelector.svelte";
 import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
-import { commitHash } from "../buildInfo.macro.ts" with { type: "macro" };
+import ThemeSelector from "../components/ThemeSelector.svelte";
+import {
+  LOCALES,
+  createI18n,
+  getLocalizedPath,
+  type Locale,
+} from "../lib/i18n";
 
 import "../global.css";
 
