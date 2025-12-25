@@ -4,55 +4,15 @@ import type {
   InspectedArchive,
   ZipWarning,
 } from "bakezip";
-
-type WorkerRequest =
-  | { id: number; type: "parse"; file: File | Blob }
-  | {
-      id: number;
-      type: "inspect";
-      processorId: number;
-      config: InspectConfig;
-    }
-  | {
-      id: number;
-      type: "rebuild";
-      processorId: number;
-      config: InspectConfig;
-      omitEntries: bigint[];
-    }
-  | { id: number; type: "dispose"; processorId: number };
-
-type WorkerRequestNoId =
-  | { type: "initialize" }
-  | { type: "parse"; file: File | Blob }
-  | { type: "inspect"; processorId: number; config: InspectConfig }
-  | {
-      type: "rebuild";
-      processorId: number;
-      config: InspectConfig;
-      omitEntries: bigint[];
-    }
-  | { type: "dispose"; processorId: number };
-
-type WorkerSuccess<T> = { id: number; ok: true; result: T };
-type WorkerError = { id: number; ok: false; error: string };
-
-type WorkerResponse<T> = WorkerSuccess<T> | WorkerError;
-
-type ParseResult = {
-  processorId: number;
-  compatibility: CompatibilityLevel;
-  warnings: ZipWarning[];
-};
-
-type InspectResult = { inspected: InspectedArchive };
-
-type RebuildResult = { blob: Blob };
+import type {
+  RequestMessage,
+  ResponseMessage,
+  WorkerRPC,
+} from "../workers/bakezip.worker";
 
 let workerSingleton: Worker | null = null;
-let nextRequestId = 1;
 const pending = new Map<
-  number,
+  string | number,
   { resolve: (value: any) => void; reject: (reason?: any) => void }
 >();
 
@@ -69,13 +29,15 @@ function getWorker(): Worker {
   );
 
   worker.onmessage = (event: MessageEvent) => {
-    const msg = event.data as WorkerResponse<any>;
+    const msg = event.data as ResponseMessage<any>;
     const handler = pending.get(msg.id);
-    if (!handler) return;
+    if (!handler) {
+      return;
+    }
     pending.delete(msg.id);
 
     if (msg.ok) {
-      handler.resolve(msg.result);
+      handler.resolve(msg.payload);
     } else {
       handler.reject(new Error(msg.error));
     }
@@ -92,14 +54,19 @@ function getWorker(): Worker {
   return worker;
 }
 
-async function callWorker<T>(message: WorkerRequestNoId): Promise<T> {
-  const id = nextRequestId++;
+async function callWorker<K extends keyof WorkerRPC>(
+  type: K,
+  payload: WorkerRPC[K]["Request"],
+): Promise<WorkerRPC[K]["Response"]> {
+  const id = crypto.randomUUID();
   const worker = getWorker();
-  const payload = { id, ...message } as WorkerRequest;
+  const message = { id, type, payload } as RequestMessage<
+    WorkerRPC[K]["Request"]
+  >;
 
-  return new Promise<T>((resolve, reject) => {
+  return new Promise<WorkerRPC[K]["Response"]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    worker.postMessage(payload);
+    worker.postMessage(message);
   });
 }
 
@@ -117,10 +84,10 @@ class ZipProcessorWorkerProxyImpl implements ZipProcessorProxy {
   readonly #warnings: readonly ZipWarning[];
   readonly #processorId: number;
 
-  constructor(args: ParseResult) {
-    this.#processorId = args.processorId;
-    this.#compatibility = args.compatibility;
-    this.#warnings = args.warnings;
+  constructor(payload: WorkerRPC["parse"]["Response"]) {
+    this.#processorId = payload.processorId;
+    this.#compatibility = payload.compatibility;
+    this.#warnings = payload.warnings;
   }
 
   get compatibility(): CompatibilityLevel {
@@ -132,8 +99,7 @@ class ZipProcessorWorkerProxyImpl implements ZipProcessorProxy {
   }
 
   async inspect(config: InspectConfig): Promise<InspectedArchive> {
-    const result = await callWorker<InspectResult>({
-      type: "inspect",
+    const result = await callWorker("inspect", {
       processorId: this.#processorId,
       config,
     });
@@ -145,8 +111,7 @@ class ZipProcessorWorkerProxyImpl implements ZipProcessorProxy {
     omitEntries: BigUint64Array,
   ): Promise<Blob> {
     const omit = Array.from(omitEntries);
-    const result = await callWorker<RebuildResult>({
-      type: "rebuild",
+    const result = await callWorker("rebuild", {
       processorId: this.#processorId,
       config,
       omitEntries: omit,
@@ -155,20 +120,19 @@ class ZipProcessorWorkerProxyImpl implements ZipProcessorProxy {
   }
 
   async dispose(): Promise<void> {
-    await callWorker<{ disposed: true }>({
-      type: "dispose",
+    await callWorker("dispose", {
       processorId: this.#processorId,
     });
   }
 }
 
 export async function initializeWorker(): Promise<void> {
-  await callWorker<{ initialized: true }>({ type: "initialize" });
+  await callWorker("initialize", {});
 }
 
 export async function parseZipInWorker(
   file: File | Blob,
 ): Promise<ZipProcessorProxy> {
-  const result = await callWorker<ParseResult>({ type: "parse", file });
+  const result = await callWorker("parse", { file });
   return new ZipProcessorWorkerProxyImpl(result);
 }

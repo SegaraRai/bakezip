@@ -8,48 +8,73 @@ import init, {
   type ZipWarning,
 } from "bakezip";
 
-type RequestMessage =
-  | {
-      id: number;
-      type: "initialize";
-    }
-  | {
-      id: number;
-      type: "parse";
+export type WorkerRPC = {
+  initialize: {
+    Request: {};
+    Response: {
+      initialized: true;
+    };
+  };
+  parse: {
+    Request: {
       file: File | Blob;
-    }
-  | {
-      id: number;
-      type: "inspect";
+    };
+    Response: {
+      processorId: number;
+      compatibility: CompatibilityLevel;
+      warnings: readonly ZipWarning[];
+    };
+  };
+  inspect: {
+    Request: {
       processorId: number;
       config: InspectConfig;
-    }
-  | {
-      id: number;
-      type: "rebuild";
+    };
+    Response: {
+      inspected: InspectedArchive;
+    };
+  };
+  rebuild: {
+    Request: {
       processorId: number;
       config: InspectConfig;
       omitEntries: bigint[];
-    }
-  | {
-      id: number;
-      type: "dispose";
+    };
+    Response: {
+      blob: Blob;
+    };
+  };
+  dispose: {
+    Request: {
       processorId: number;
     };
-
-type SuccessResponseMessage<T> = {
-  id: number;
-  ok: true;
-  result: T;
+    Response: {
+      disposed: true;
+    };
+  };
 };
 
-type ErrorResponseMessage = {
-  id: number;
+export type SuccessResponseMessage<T> = {
+  id: string | number;
+  ok: true;
+  payload: T;
+};
+
+export type ErrorResponseMessage = {
+  id: string | number;
   ok: false;
   error: string;
 };
 
-type ResponseMessage<T> = SuccessResponseMessage<T> | ErrorResponseMessage;
+export type ResponseMessage<T> =
+  | SuccessResponseMessage<T>
+  | ErrorResponseMessage;
+
+export type RequestMessage<T> = {
+  id: string | number;
+  type: keyof WorkerRPC;
+  payload: T;
+};
 
 const processors = new Map<number, ZipProcessor>();
 let nextProcessorId = 1;
@@ -65,83 +90,97 @@ async function ensureInit(): Promise<void> {
   initialized = true;
 
   const elapsed = performance.now() - ts;
-  console.log(`bakezip wasm initialized in ${elapsed.toFixed(2)} ms`);
+  console.log(`Worker initialized in ${elapsed.toFixed(2)} ms`);
 }
 
-function postOk<T>(id: number, result: T): void {
-  const msg: ResponseMessage<T> = { id, ok: true, result };
-  (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg);
-}
+const handler = {
+  async initialize(): Promise<{ initialized: true }> {
+    await ensureInit();
+    return { initialized: true };
+  },
 
-function postErr(id: number, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
-  const msg: ErrorResponseMessage = { id, ok: false, error: message };
-  (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg);
-}
+  async parse(payload: { file: File | Blob }): Promise<{
+    processorId: number;
+    compatibility: CompatibilityLevel;
+    warnings: readonly ZipWarning[];
+  }> {
+    await ensureInit();
+    const processor = await ZipProcessor.parse(payload.file);
+    const processorId = nextProcessorId++;
+    processors.set(processorId, processor);
+
+    const compatibility: CompatibilityLevel = processor.compatibility;
+    const warnings: ZipWarning[] = processor.get_warnings();
+
+    return { processorId, compatibility, warnings };
+  },
+
+  async inspect(payload: {
+    processorId: number;
+    config: InspectConfig;
+  }): Promise<{ inspected: InspectedArchive }> {
+    await ensureInit();
+    const processor = processors.get(payload.processorId);
+    if (!processor) {
+      throw new Error("Processor not found (maybe disposed)");
+    }
+    const inspected: InspectedArchive = processor.inspect(payload.config);
+    return { inspected };
+  },
+
+  async rebuild(payload: {
+    processorId: number;
+    config: InspectConfig;
+    omitEntries: bigint[];
+  }): Promise<{ blob: Blob }> {
+    await ensureInit();
+    const processor = processors.get(payload.processorId);
+    if (!processor) {
+      throw new Error("Processor not found (maybe disposed)");
+    }
+
+    const omit = new BigUint64Array(payload.omitEntries);
+    const blob = processor.rebuild(payload.config, omit);
+    return { blob };
+  },
+
+  async dispose(payload: { processorId: number }): Promise<{ disposed: true }> {
+    processors.get(payload.processorId)?.free();
+    processors.delete(payload.processorId);
+    return { disposed: true };
+  },
+} satisfies {
+  [K in keyof WorkerRPC]: (
+    payload: WorkerRPC[K]["Request"],
+  ) => Promise<WorkerRPC[K]["Response"]>;
+};
 
 (globalThis as unknown as DedicatedWorkerGlobalScope).onmessage = async (
   event,
 ) => {
-  const data = event.data as RequestMessage;
+  const data = event.data as RequestMessage<any>;
 
   try {
-    switch (data.type) {
-      case "initialize": {
-        await ensureInit();
-        postOk(data.id, { initialized: true });
-        return;
-      }
-
-      case "parse": {
-        await ensureInit();
-        const processor = await ZipProcessor.parse(data.file);
-        const processorId = nextProcessorId++;
-        processors.set(processorId, processor);
-
-        const compatibility: CompatibilityLevel = processor.compatibility;
-        const warnings: ZipWarning[] = processor.get_warnings();
-
-        postOk(data.id, { processorId, compatibility, warnings });
-        return;
-      }
-
-      case "inspect": {
-        await ensureInit();
-        const processor = processors.get(data.processorId);
-        if (!processor) {
-          throw new Error("Processor not found (maybe disposed)");
-        }
-        const inspected: InspectedArchive = processor.inspect(data.config);
-        postOk(data.id, { inspected });
-        return;
-      }
-
-      case "rebuild": {
-        await ensureInit();
-        const processor = processors.get(data.processorId);
-        if (!processor) {
-          throw new Error("Processor not found (maybe disposed)");
-        }
-
-        const omit = new BigUint64Array(data.omitEntries);
-        const blob = processor.rebuild(data.config, omit);
-        postOk(data.id, { blob });
-        return;
-      }
-
-      case "dispose": {
-        processors.get(data.processorId)?.free();
-        processors.delete(data.processorId);
-        postOk(data.id, { disposed: true });
-        return;
-      }
-
-      default: {
-        const exhaustive: never = data;
-        throw new Error(`Unknown message type: ${(exhaustive as any).type}`);
-      }
+    const func = handler[data.type];
+    if (!func) {
+      throw new Error(`Unknown message type: ${data.type}`);
     }
+
+    const payload = await func(data.payload);
+
+    const msg: ResponseMessage<typeof payload> = {
+      id: data.id,
+      ok: true,
+      payload,
+    };
+    (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg);
   } catch (err) {
-    postErr(data.id, err);
+    const message = err instanceof Error ? err.message : String(err);
+    const msg: ErrorResponseMessage = {
+      id: data.id,
+      ok: false,
+      error: message,
+    };
+    (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg);
   }
 };
