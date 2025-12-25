@@ -48,5 +48,5 @@ export function getLocalizedPath(path: string, locale: Locale): string {
     : strippedPath;
   return effectiveLocale === baseLocale
     ? `/${localeStrippedPath}`
-    : `/${effectiveLocale}/${localeStrippedPath}`.replace(/\/$/, "");
+    : `/${effectiveLocale}/${localeStrippedPath}`;
 }
