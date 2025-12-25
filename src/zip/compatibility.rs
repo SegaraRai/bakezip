@@ -277,7 +277,7 @@ mod tests {
                 assert_eq!(with_utf8_flags, Prevalence::None);
                 assert_eq!(with_unicode_path_fields, Prevalence::None);
             }
-            _ => panic!("Expected AsciiOnly, got {:?}", compatibility),
+            _ => panic!("Expected AsciiOnly, got {compatibility:?}"),
         }
     }
 
@@ -295,7 +295,7 @@ mod tests {
                 assert_eq!(with_utf8_flags, Prevalence::Always);
                 assert_eq!(with_unicode_path_fields, Prevalence::None);
             }
-            _ => panic!("Expected Utf8Only, got {:?}", compatibility),
+            _ => panic!("Expected Utf8Only, got {compatibility:?}"),
         }
     }
 
@@ -308,7 +308,7 @@ mod tests {
 
         match compatibility {
             CompatibilityLevel::Broken => {}
-            _ => panic!("Expected Broken, got {:?}", compatibility),
+            _ => panic!("Expected Broken, got {compatibility:?}"),
         }
     }
 
@@ -326,7 +326,7 @@ mod tests {
             } => {
                 assert_eq!(with_unicode_path_fields, Prevalence::None);
             }
-            _ => panic!("Expected Other, got {:?}", compatibility),
+            _ => panic!("Expected Other, got {compatibility:?}"),
         }
     }
 
@@ -351,7 +351,7 @@ mod tests {
                 assert_eq!(with_utf8_flags, Prevalence::None);
                 assert_eq!(with_unicode_path_fields, Prevalence::Always);
             }
-            _ => panic!("Expected AsciiOnly, got {:?}", compatibility),
+            _ => panic!("Expected AsciiOnly, got {compatibility:?}"),
         }
     }
 }

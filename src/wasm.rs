@@ -31,7 +31,7 @@ pub struct ZipWarning {
 impl ZipProcessor {
     pub async fn parse(blob: Blob) -> Result<Self, JsValue> {
         let mut reader = JsBlobReader::new(blob.clone());
-        let (zip_file, warnings) = ZipFile::parse_with_warnings(&mut reader)
+        let (zip_file, warnings) = ZipFile::parse_with_warnings(&mut reader, true)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to parse zip: {e}")))?;
         let compatibility = CompatibilityLevel::analyze(&zip_file);

@@ -209,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let mut reader = FileZipReader::new(&cli.input)?;
-    let zip_file = ZipFile::parse(&mut reader, |idx, err| {
+    let zip_file = ZipFile::parse(&mut reader, false, |idx, err| {
         eprintln!("Warning at index {idx:?}: {err}");
         Ok(())
     })
@@ -244,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command.unwrap_or(Commands::Inspect) {
         Commands::Inspect => {
             let inspected = InspectedArchive::inspect(&zip_file, &config)
-                .map_err(|e| format!("Failed to inspect zip: {}", e))?;
+                .map_err(|e| format!("Failed to inspect zip: {e}"))?;
 
             println!("Overall encoding: {:?}", inspected.overall_encoding);
 
@@ -281,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut omit_indices = omit.clone();
             if remove_os_metadata {
                 let inspected = InspectedArchive::inspect(&zip_file, &config)
-                    .map_err(|e| format!("Failed to inspect zip for filtering: {}", e))?;
+                    .map_err(|e| format!("Failed to inspect zip for filtering: {e}"))?;
                 for (i, entry) in inspected.entries.iter().enumerate() {
                     let filename = entry
                         .filename

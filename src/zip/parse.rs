@@ -33,6 +33,7 @@ impl ZipFile {
     /// Parse a zip file from a ZipReader
     pub async fn parse<Reader: ZipReader>(
         reader: &mut Reader,
+        ignore_data_descriptor: bool,
         mut on_warning: impl FnMut(Option<u64>, ZipParseError) -> Result<(), ZipParseError>,
     ) -> Result<Self, ZipParseError> {
         let size = reader.get_size().await?;
@@ -40,6 +41,7 @@ impl ZipFile {
         let (eocd, zip64_eocd, entries) = parse_zip(
             reader,
             DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE,
+            ignore_data_descriptor,
             |eocd, zip64_eocd| Ok((eocd, zip64_eocd, Vec::new())),
             |(_, _, entries), entry| {
                 entries.push(entry);
@@ -60,6 +62,7 @@ impl ZipFile {
     /// Parse a zip file from a ZipReader
     pub async fn parse_with_warnings<Reader: ZipReader>(
         reader: &mut Reader,
+        ignore_data_descriptor: bool,
     ) -> Result<(Self, Vec<(Option<u64>, ZipParseError)>), ZipParseError> {
         let size = reader.get_size().await?;
 
@@ -67,6 +70,7 @@ impl ZipFile {
         let (eocd, zip64_eocd, entries) = parse_zip(
             reader,
             DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE,
+            ignore_data_descriptor,
             |eocd, zip64_eocd| Ok((eocd, zip64_eocd, Vec::new())),
             |(_, _, entries), entry| {
                 entries.push(entry);
@@ -112,6 +116,7 @@ pub const DEFAULT_ZIP64_FALLBACK_SEARCH_SIZE: u64 = 1024 * 1024; // 1 MiB
 async fn parse_zip<Reader: ZipReader, State: Sized>(
     reader: &mut Reader,
     zip64_fallback_search_size: u64,
+    ignore_data_descriptor: bool,
     on_eocd: impl FnOnce(
         EndOfCentralDirectory,
         Option<(
@@ -306,11 +311,11 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
 
         // Parse LFH
         let lfh_full_data = {
+            // To reduce number of reads, first read an assumed size of LFH
+            const ASSUMED_LFH_SIZE: u64 = 256;
+
             let lfh_data = reader
-                .read(
-                    cdh.local_header_offset as u64,
-                    LocalFileHeader::MIN_SIZE as u64,
-                )
+                .read(cdh.local_header_offset as u64, ASSUMED_LFH_SIZE)
                 .await?;
             if lfh_data.len() < LocalFileHeader::MIN_SIZE {
                 return Err(ZipParseError::LengthTooShort {
@@ -324,9 +329,14 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
             let extra_field_len = parse_u16_le(&lfh_data[28..30]) as usize;
             let lfh_full_size = LocalFileHeader::MIN_SIZE + filename_len + extra_field_len;
 
-            reader
-                .read(cdh.local_header_offset as u64, lfh_full_size as u64)
-                .await?
+            if lfh_full_size as u64 <= ASSUMED_LFH_SIZE {
+                lfh_data[..lfh_full_size].to_vec()
+            } else {
+                // Read full LFH
+                reader
+                    .read(cdh.local_header_offset as u64, lfh_full_size as u64)
+                    .await?
+            }
         };
         let lfh = LocalFileHeader::parse(&lfh_full_data, |warning| {
             on_warning(Some(&mut state), Some(idx), warning)
@@ -339,7 +349,7 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
             .unwrap_or(cdh.compressed_size as u64);
 
         // Parse Data Descriptor if present
-        let descriptor = if lfh.flags.has_data_descriptor() {
+        let descriptor = if !ignore_data_descriptor && lfh.flags.has_data_descriptor() {
             // When Data Descriptor is present, the values in LFH are set to zero
             if lfh.compressed_size != 0 {
                 on_warning(
@@ -380,11 +390,7 @@ async fn parse_zip<Reader: ZipReader, State: Sized>(
             let has_zip64_extension = lfh
                 .extra_fields
                 .iter()
-                .any(|ef| ef.tag == Zip64ExtendedInfo::TAG)
-                || cdh
-                    .extra_fields
-                    .iter()
-                    .any(|ef| ef.tag == Zip64ExtendedInfo::TAG);
+                .any(|ef| ef.tag == Zip64ExtendedInfo::TAG);
 
             // Read and parse Data Descriptor
             let result = if has_zip64_extension {
@@ -1743,7 +1749,7 @@ mod tests {
         data.extend_from_slice(&0u16.to_le_bytes()); // Comment length
 
         let mut reader = MockReader::new(data);
-        let result = ZipFile::parse(&mut reader, |_, _| Ok(())).await;
+        let result = ZipFile::parse(&mut reader, false, |_, _| Ok(())).await;
 
         assert!(result.is_ok());
         let zip = result.unwrap();
