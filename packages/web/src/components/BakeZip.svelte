@@ -1,13 +1,13 @@
 <script lang="ts">
-  import init, {
-    ZipProcessor,
-    type CompatibilityLevel,
-    type EncodingSelectionStrategy,
-    type FieldSelectionStrategy,
-    type InspectedArchive,
-    type WaveDashHandling,
-    type WaveDashNormalization,
+  import type {
+    CompatibilityLevel,
+    EncodingSelectionStrategy,
+    FieldSelectionStrategy,
+    InspectedArchive,
+    WaveDashHandling,
+    WaveDashNormalization,
   } from "bakezip";
+  import { onMount } from "svelte";
   import LineMdAlert from "../icons/LineMdAlert.svelte";
   import LineMdAlertCircle from "../icons/LineMdAlertCircle.svelte";
   import LineMdCloseCircle from "../icons/LineMdCloseCircle.svelte";
@@ -16,14 +16,29 @@
   import LineMdDownloadLoop from "../icons/LineMdDownloadLoop.svelte";
   import LineMdFolderZip from "../icons/LineMdFolderZip.svelte";
   import LineMdLoadingLoop from "../icons/LineMdLoadingLoop.svelte";
+  import {
+    initializeWorker,
+    parseZipInWorker,
+    type ZipProcessorProxy,
+  } from "../lib/bakezipWorkerClient";
   import { createI18n, type Locale } from "../lib/i18n";
 
   const { locale }: { locale: Locale } = $props();
   const m = $derived.by(() => createI18n(locale));
 
-  let selectedFile = $state<File | null>(null);
-  let processor = $state<ZipProcessor | null>(null);
-  let inspectedArchive = $state<InspectedArchive | null>(null);
+  onMount(() => {
+    requestIdleCallback(async () => {
+      await initializeWorker();
+    });
+  });
+
+  let selectedFile = $state.raw<File | null>(null);
+  let processor = $state.raw<ZipProcessorProxy | null>(null);
+  let inspectedArchive = $state.raw<InspectedArchive | null>(null);
+
+  // These should ideally be derived, but `$derived` is too slow to inspect many entries
+  let decodeErrorCount = $state<number>(0);
+  let hasOSMetadataFiles = $state<boolean>(false);
 
   let busy = $state<"parsing" | "inspecting" | "rebuilding" | false>(false);
   let error = $state("");
@@ -47,7 +62,7 @@
   const compatibility = $derived.by(
     (): CompatibilityLevel | null => processor?.compatibility ?? null,
   );
-  const warnings = $derived.by(() => processor?.get_warnings() ?? []);
+  const warnings = $derived.by(() => processor?.warnings ?? []);
 
   const waveDashOptions = $derived.by(() => {
     if (!inspectedArchive) {
@@ -169,26 +184,6 @@
     }
   });
 
-  const decodeErrorCount = $derived.by(() => {
-    if (!inspectedArchive) {
-      return 0;
-    }
-
-    return inspectedArchive.entries.reduce((count, entry) => {
-      return entry.filename.decoded?.has_errors !== false ? count + 1 : count;
-    }, 0);
-  });
-
-  const hasOSMetadataFiles = $derived.by(() => {
-    if (!inspectedArchive) {
-      return false;
-    }
-
-    return inspectedArchive.entries.some((entry) =>
-      isOSMetadataFile(entry.filename.decoded?.string ?? ""),
-    );
-  });
-
   const shouldPauseAtStep1 = $derived.by(
     () => compatibilityCategory.level === "ok",
   );
@@ -225,6 +220,10 @@
   }
 
   async function handleFileSelect(event: Event) {
+    if (busy) {
+      return;
+    }
+
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
 
@@ -243,16 +242,22 @@
     return new Promise((resolve) => requestAnimationFrame(() => resolve()));
   }
 
-  function resetStates(step: 1 | 2 | 3): void {
+  async function resetStates(step: 1 | 2 | 3): Promise<void> {
     error = "";
 
     if (step <= 1) {
+      // Dispose previous processor if any
+      await processor?.dispose();
       processor = null;
+
       forceProceedToStep2 = false;
     }
 
     if (step <= 2) {
       inspectedArchive = null;
+      decodeErrorCount = 0;
+      hasOSMetadataFiles = false;
+
       expandStep2 = false;
       forceProceedToStep3 = false;
       encoding = "__PreferOverallDetected";
@@ -293,16 +298,14 @@
       return;
     }
 
-    resetStates(1);
     busy = "parsing";
+    await resetStates(1);
     await waitUITick();
 
     try {
-      await init();
-
       // Parse the ZIP file
       const ts = performance.now();
-      const result = await ZipProcessor.parse(selectedFile);
+      const result = await parseZipInWorker(selectedFile);
       const elapsed = performance.now() - ts;
       console.info(`Parsed ${selectedFile.name} in ${elapsed} ms`);
 
@@ -333,15 +336,15 @@
 
     const isNew = inspectedArchive == null;
 
-    if (isNew) {
-      resetStates(2);
-    }
     busy = "inspecting";
+    if (isNew) {
+      await resetStates(2);
+    }
     await waitUITick();
 
     try {
       const ts = performance.now();
-      const result = processor.inspect({
+      const result = await processor.inspect({
         encoding: getEncodingStrategy(encoding),
         field_selection_strategy: fieldSelection,
         ignore_crc32_mismatch: false,
@@ -398,6 +401,18 @@
         }
       }
 
+      decodeErrorCount = result.entries.reduce(
+        (count, entry) =>
+          entry.filename.decoded?.has_errors !== false ? count + 1 : count,
+        0,
+      );
+
+      hasOSMetadataFiles = result.entries.some(
+        (entry) =>
+          entry.filename.decoded &&
+          isOSMetadataFile(entry.filename.decoded.string),
+      );
+
       inspectedArchive = result;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -418,10 +433,10 @@
 
     const isNew = downloadFile == null;
 
-    if (isNew) {
-      resetStates(3);
-    }
     busy = "rebuilding";
+    if (isNew) {
+      await resetStates(3);
+    }
     await waitUITick();
 
     try {
