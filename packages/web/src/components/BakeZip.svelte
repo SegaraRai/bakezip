@@ -307,7 +307,7 @@
       const ts = performance.now();
       const result = await parseZipInWorker(selectedFile);
       const elapsed = performance.now() - ts;
-      console.info(`Parsed ${selectedFile.name} in ${elapsed} ms`);
+      console.info(`Parsed ${selectedFile.name} in ${elapsed.toFixed(2)} ms`);
 
       // Ensure minimum loading time for UX
       if (elapsed < 300) {
@@ -354,7 +354,7 @@
         wave_dash_normalization: "Preserve",
       });
       const elapsed = performance.now() - ts;
-      console.info(`Inspected archive in ${elapsed} ms`);
+      console.info(`Inspected archive in ${elapsed.toFixed(2)} ms`);
 
       forceProceedToStep3 = false;
 
@@ -466,7 +466,7 @@
         new BigUint64Array(omitEntries),
       );
       const elapsed = performance.now() - ts;
-      console.info(`Rebuilt archive in ${elapsed} ms`);
+      console.info(`Rebuilt archive in ${elapsed.toFixed(2)} ms`);
 
       downloadFile = new File([rebuiltBlob], newFilename, {
         type: "application/zip",
@@ -552,10 +552,11 @@
               data-selected={!!selectedFile}
             >
               <input
+                aria-label={m.step1_file_placeholder()}
+                name="zip-file"
                 type="file"
                 accept=".zip"
                 disabled={!!busy}
-                aria-label={m.step1_file_placeholder()}
                 class="absolute inset-0 cursor-wait enabled:cursor-pointer opacity-0 appearance-none"
                 onchange={handleFileSelect}
               />
@@ -666,6 +667,7 @@
                   aria-expanded={forceProceedToStep2}
                   name="force-step2"
                   type="checkbox"
+                  disabled={!!busy}
                   class="peer checkbox"
                   bind:checked={forceProceedToStep2}
                 />
@@ -722,6 +724,7 @@
                 >
                 <select
                   name="encoding-select"
+                  disabled={!!busy}
                   class="select w-full"
                   bind:value={encoding}
                   onchange={inspectArchive}
@@ -754,6 +757,7 @@
                 >
                 <select
                   name="field-select"
+                  disabled={!!busy}
                   class="select w-full"
                   bind:value={fieldSelection}
                   onchange={inspectArchive}
@@ -791,10 +795,11 @@
                     {m.option_wave_dash_handling()}
                   </legend>
                   <select
+                    name="wave-dash-handling-select"
+                    disabled={!!busy}
                     class="select w-full"
                     bind:value={waveDashHandling}
                     onchange={inspectArchive}
-                    disabled={!!busy}
                   >
                     <option value="DecodeToFullwidthTilde">
                       {m.option_wd_fullwidth_tilde_default()}
@@ -810,10 +815,11 @@
                     {m.option_wave_dash_normalization()}
                   </legend>
                   <select
+                    name="wave-dash-normalization-select"
+                    disabled={!!busy}
                     class="select w-full"
                     bind:value={waveDashNormalization}
                     onchange={inspectArchive}
-                    disabled={!!busy}
                   >
                     <option value="Preserve">
                       {m.option_wd_preserve_default()}
@@ -838,10 +844,11 @@
                     {m.option_wave_dash_normalization()}
                   </legend>
                   <select
+                    name="wave-dash-normalization-select"
+                    disabled={!!busy}
                     class="select w-full"
                     bind:value={waveDashNormalization}
                     onchange={inspectArchive}
-                    disabled={!!busy}
                   >
                     <option value="NormalizeToFullwidthTilde">
                       {m.option_wd_unify_fullwidth_tilde_default()}
@@ -1022,6 +1029,7 @@
                     aria-expanded={forceProceedToStep3}
                     name="force-step3"
                     type="checkbox"
+                    disabled={!!busy}
                     class="peer checkbox"
                     bind:checked={forceProceedToStep3}
                   />
@@ -1075,6 +1083,7 @@
                     <input
                       name="remove-os-metadata"
                       type="checkbox"
+                      disabled={!!busy}
                       class="peer checkbox"
                       bind:checked={removeOSMetadataFiles}
                       onchange={rebuildArchive}
