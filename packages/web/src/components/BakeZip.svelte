@@ -32,7 +32,7 @@
     });
   });
 
-  let selectedFile = $state.raw<File | null>(null);
+  let selectedFile = $state<File | null>(null);
   let processor = $state.raw<ZipProcessorProxy | null>(null);
   let inspectedArchive = $state.raw<InspectedArchive | null>(null);
 
@@ -891,7 +891,9 @@
                   <div
                     class="group-data-[expanded=false]:hidden max-h-[calc(100vh-16rem)] mt-4 overflow-auto rounded-lg border border-base-200"
                   >
-                    <table class="table table-zebra table-pin-rows w-full">
+                    <table
+                      class="table table-zebra table-pin-rows w-full contain-content [container-name:table]"
+                    >
                       <thead class="bg-base-200">
                         <tr>
                           <th scope="col"></th>
@@ -938,7 +940,7 @@
                             <td
                               lang={entry.filename.decoded ? "" : undefined}
                               title={entry.filename.decoded?.string}
-                              class="min-w-40 truncate group-data-[category=error]:text-error group-data-[category=metadata]:text-info"
+                              class="min-w-40 max-w-[max(100cqw-20rem,10rem)] truncate group-data-[category=error]:text-error group-data-[category=metadata]:text-info"
                             >
                               {#if entry.filename.decoded}
                                 {entry.filename.decoded.string}
@@ -949,7 +951,7 @@
                               {/if}
                             </td>
                             <td
-                              class="w-50 group-data-[encoding-mismatch=true]:text-warning"
+                              class="group-data-[encoding-mismatch=true]:text-warning whitespace-nowrap"
                             >
                               <span
                                 lang={entry.filename.decoded ? "en" : undefined}
@@ -963,10 +965,10 @@
                                 </span>
                               {/if}
                             </td>
-                            <td class="w-40 text-base-content/70">
+                            <td class="text-base-content/70 whitespace-nowrap">
                               {m[`field_type_${entry.filename.kind}`]()}
                             </td>
-                            <td class="w-30 text-center">
+                            <td class="text-center whitespace-nowrap">
                               <span class="grid place-items-center">
                                 {#if entry.filename.utf8_flag}
                                   <span
