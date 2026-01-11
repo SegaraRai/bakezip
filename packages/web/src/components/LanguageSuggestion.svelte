@@ -80,19 +80,23 @@
     <div role="alert" aria-live="assertive" class="alert alert-info shadow-lg">
       <span aria-hidden="true" class="icon-[mdi--translate] text-2xl"></span>
       <div>
-        <h3 class="font-bold">{m.language_suggestion_title()}</h3>
+        <h3 class="font-bold">
+          {m.language_suggestion_title()}
+        </h3>
         <div class="text-xs">
           {m.language_suggestion_text({ language: suggestedLocale.name })}
         </div>
       </div>
       <div class="flex-none">
-        <button class="btn btn-sm btn-ghost" onclick={dismiss}
-          >{m.language_suggestion_dismiss()}</button
-        >
+        <button class="btn btn-sm btn-ghost" onclick={dismiss}>
+          {m.language_suggestion_dismiss()}
+        </button>
         <a
           href={getLocalizedPath(pathname, suggestedLocale.code)}
-          class="btn btn-sm btn-primary">{m.language_suggestion_accept()}</a
+          class="btn btn-sm btn-primary"
         >
+          {m.language_suggestion_accept()}
+        </a>
       </div>
     </div>
   </div>

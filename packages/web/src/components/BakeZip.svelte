@@ -671,9 +671,9 @@
                   class="peer checkbox"
                   bind:checked={forceProceedToStep2}
                 />
-                <span class="peer-checked:text-primary"
-                  >{m.step1_process_anyway()}</span
-                >
+                <span class="peer-checked:text-primary">
+                  {m.step1_process_anyway()}
+                </span>
               </label>
             </div>
           {/if}
@@ -719,9 +719,9 @@
             >
               <!-- Encoding Selection -->
               <fieldset class="fieldset group-data-[expanded=false]:hidden">
-                <legend class="fieldset-legend text-sm"
-                  >{m.step2_encoding_label()}</legend
-                >
+                <legend class="fieldset-legend text-sm">
+                  {m.step2_encoding_label()}
+                </legend>
                 <select
                   name="encoding-select"
                   disabled={!!busy}
@@ -729,21 +729,27 @@
                   bind:value={encoding}
                   onchange={inspectArchive}
                 >
-                  <option value="__PreferOverallDetected"
-                    >{m.step2_encoding_auto_overall()}</option
-                  >
-                  <option value="__EntryDetected"
-                    >{m.step2_encoding_auto_entry()}</option
-                  >
-                  <option value="UTF-8">{m.step2_encoding_force_utf8()}</option>
-                  <option value="Shift_JIS"
-                    >{m.step2_encoding_force_shift_jis()}</option
-                  >
-                  <option value="EUC-KR"
-                    >{m.step2_encoding_force_euc_kr()}</option
-                  >
-                  <option value="GBK">{m.step2_encoding_force_gbk()}</option>
-                  <option value="Big5">{m.step2_encoding_force_big5()}</option>
+                  <option value="__PreferOverallDetected">
+                    {m.step2_encoding_auto_overall()}
+                  </option>
+                  <option value="__EntryDetected">
+                    {m.step2_encoding_auto_entry()}
+                  </option>
+                  <option value="UTF-8">
+                    {m.step2_encoding_force_utf8()}
+                  </option>
+                  <option value="Shift_JIS">
+                    {m.step2_encoding_force_shift_jis()}
+                  </option>
+                  <option value="EUC-KR">
+                    {m.step2_encoding_force_euc_kr()}
+                  </option>
+                  <option value="GBK">
+                    {m.step2_encoding_force_gbk()}
+                  </option>
+                  <option value="Big5">
+                    {m.step2_encoding_force_big5()}
+                  </option>
                 </select>
                 <p class="label">
                   {m.step2_encoding_force_note()}
@@ -762,26 +768,30 @@
                   bind:value={fieldSelection}
                   onchange={inspectArchive}
                 >
-                  <option value="CdhUnicodeThenLfhUnicodeThenCdh"
-                    >{m.step2_field_cdh_unicode_lfh_unicode_cdh()}</option
-                  >
-                  <option value="CdhUnicodeThenLfhUnicodeThenLfh"
-                    >{m.step2_field_cdh_unicode_lfh_unicode_lfh()}</option
-                  >
-                  <option value="LfhUnicodeThenCdhUnicodeThenCdh"
-                    >{m.step2_field_lfh_unicode_cdh_unicode_cdh()}</option
-                  >
-                  <option value="LfhUnicodeThenCdhUnicodeThenLfh"
-                    >{m.step2_field_lfh_unicode_cdh_unicode_lfh()}</option
-                  >
-                  <option value="CdhUnicodeThenCdh"
-                    >{m.step2_field_cdh_unicode_cdh()}</option
-                  >
-                  <option value="LfhUnicodeThenLfh"
-                    >{m.step2_field_lfh_unicode_lfh()}</option
-                  >
-                  <option value="CdhOnly">{m.step2_field_cdh_only()}</option>
-                  <option value="LfhOnly">{m.step2_field_lfh_only()}</option>
+                  <option value="CdhUnicodeThenLfhUnicodeThenCdh">
+                    {m.step2_field_cdh_unicode_lfh_unicode_cdh()}
+                  </option>
+                  <option value="CdhUnicodeThenLfhUnicodeThenLfh">
+                    {m.step2_field_cdh_unicode_lfh_unicode_lfh()}
+                  </option>
+                  <option value="LfhUnicodeThenCdhUnicodeThenCdh">
+                    {m.step2_field_lfh_unicode_cdh_unicode_cdh()}
+                  </option>
+                  <option value="LfhUnicodeThenCdhUnicodeThenLfh">
+                    {m.step2_field_lfh_unicode_cdh_unicode_lfh()}
+                  </option>
+                  <option value="CdhUnicodeThenCdh">
+                    {m.step2_field_cdh_unicode_cdh()}
+                  </option>
+                  <option value="LfhUnicodeThenLfh">
+                    {m.step2_field_lfh_unicode_lfh()}
+                  </option>
+                  <option value="CdhOnly">
+                    {m.step2_field_cdh_only()}
+                  </option>
+                  <option value="LfhOnly">
+                    {m.step2_field_lfh_only()}
+                  </option>
                 </select>
                 <p class="label">
                   {m.step2_field_selection_note()}
@@ -904,14 +914,18 @@
                       <thead class="bg-base-200">
                         <tr>
                           <th scope="col"></th>
-                          <th scope="col">{m.step2_table_filename()}</th>
-                          <th scope="col"
-                            >{m.step2_table_detected_encoding()}</th
-                          >
-                          <th scope="col">{m.step2_table_field_type()}</th>
-                          <th scope="col" class="text-center"
-                            >{m.step2_table_utf8_flag()}</th
-                          >
+                          <th scope="col">
+                            {m.step2_table_filename()}
+                          </th>
+                          <th scope="col">
+                            {m.step2_table_detected_encoding()}
+                          </th>
+                          <th scope="col">
+                            {m.step2_table_field_type()}
+                          </th>
+                          <th scope="col" class="text-center">
+                            {m.step2_table_utf8_flag()}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1033,9 +1047,9 @@
                     class="peer checkbox"
                     bind:checked={forceProceedToStep3}
                   />
-                  <span class="peer-checked:text-primary"
-                    >{m.step2_ignore_errors()}</span
-                  >
+                  <span class="peer-checked:text-primary">
+                    {m.step2_ignore_errors()}
+                  </span>
                 </label>
               </div>
             {/if}
@@ -1154,10 +1168,11 @@
     <!-- Footer -->
     <div class="[view-transition-name:app-footer]">
       <p class="mt-8 text-center text-sm text-base-content/50">
-        {m.footer_privacy_text()}
-        <a href="/privacy" hreflang="en" class="link link-hover"
-          >{m.footer_privacy_link()}</a
-        >
+        <span>{m.footer_privacy_text()}</span>
+        {" "}
+        <a href="/privacy" hreflang="en" class="link link-hover">
+          {m.footer_privacy_link()}
+        </a>
       </p>
     </div>
   </div>
