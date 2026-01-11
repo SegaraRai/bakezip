@@ -14,6 +14,7 @@ import {
 // https://astro.build/config
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://bakezip.roundtrip.dev",
+  trailingSlash: "never",
   build: {
     format: "file",
   },

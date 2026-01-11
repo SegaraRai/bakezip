@@ -45,7 +45,10 @@ export function createI18n(locale: Locale): typeof orgM {
 export function getLocalizedPath(path: string, locale: Locale): string {
   const effectiveLocale = toAvailableLocale(locale);
 
-  const components = path.replace(/^\/+/, "").split("/");
+  const components = path
+    .replace(/\.html$/, "")
+    .replace(/^\/+/, "")
+    .split("/");
   const localeStrippedPath = (locales as readonly string[]).includes(
     components[0],
   )
