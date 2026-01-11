@@ -21,11 +21,11 @@
   );
 
   $effect(() => {
-    const dismissed = localStorage.getItem(LSKEY_DISMISSED);
-    if (dismissed) {
-      show = false;
-      return;
-    }
+    /**
+     * A locale to be suggested, or false if no suggestion is needed (because user is already using it).
+     * `null` means no suggestion found.
+     */
+    let toBeSuggested: (typeof LOCALES)[number] | false | null = null;
 
     const browserLocales = navigator.languages || [navigator.language];
     for (const locale of browserLocales) {
@@ -34,21 +34,36 @@
         LOCALES.find((l) => l.code === `${parsed.language}-${parsed.region}`) ??
         LOCALES.find((l) => l.code === parsed.language);
       if (matched) {
-        if (matched.code === currentLocale) {
-          // Clear dismissed flag if user is already using the suggested language
-          try {
-            localStorage.removeItem(LSKEY_DISMISSED);
-          } catch {}
-          show = false;
-        } else {
-          suggestedLocale = matched;
-          show = true;
-        }
+        toBeSuggested = matched.code === currentLocale ? false : matched;
         // If the first matching locale is the current one, we are good.
         // If we found a match and it's different, we suggest.
         // If we found a match and it IS the current one, we stop looking.
         break;
       }
+    }
+
+    if (toBeSuggested) {
+      // Check if user has dismissed before
+      const dismissed = localStorage.getItem(LSKEY_DISMISSED);
+      if (dismissed) {
+        show = false;
+        return;
+      }
+
+      // Show suggestion
+      suggestedLocale = toBeSuggested;
+      show = true;
+      return;
+    }
+
+    // No suggestion found or needed
+    show = false;
+
+    // Clear dismissed flag if user is already using the suggested language
+    if (toBeSuggested === false) {
+      try {
+        localStorage.removeItem(LSKEY_DISMISSED);
+      } catch {}
     }
   });
 
