@@ -15,7 +15,7 @@ import {
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://bakezip.roundtrip.dev",
   build: {
-    format: "preserve",
+    format: "file",
   },
   i18n: {
     locales: locales,
