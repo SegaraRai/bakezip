@@ -3,6 +3,10 @@ import { baseLocale, type Locale, locales } from "../paraglide/runtime";
 
 export type { Locale } from "../paraglide/runtime";
 
+export const DEFAULT_LOCALE: Locale = baseLocale;
+
+export const LSKEY_SELECTED_LOCALE = "user-selected-language";
+
 export const LOCALES: readonly {
   readonly code: Locale;
   readonly name: string;

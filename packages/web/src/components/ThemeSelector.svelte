@@ -1,20 +1,23 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createI18n, type Locale } from "../lib/i18n";
+  import {
+    DEFAULT_THEME,
+    FALLBACK_THEME,
+    LSKEY_THEME,
+    THEME_MAP,
+    type StaticTheme,
+    type Theme,
+  } from "../lib/theme";
 
-  type Theme = "light" | "dark" | "system";
-
-  const LSKEY_THEME = "theme";
-  const THEMES: readonly { readonly theme: Theme; readonly icon: string }[] = [
+  const AVAILABLE_THEMES: readonly {
+    readonly theme: Theme;
+    readonly icon: string;
+  }[] = [
     { theme: "light", icon: "icon-[mdi--white-balance-sunny]" },
     { theme: "dark", icon: "icon-[mdi--weather-night]" },
     { theme: "system", icon: "icon-[mdi--desktop-mac]" },
   ];
-  const DEFAULT_THEME: Theme = "system";
-  const THEME_MAP: Partial<Record<Theme, string>> = {
-    light: "winter",
-    dark: "night",
-  };
 
   const { locale }: { locale: Locale } = $props();
 
@@ -25,7 +28,7 @@
   onMount(() => {
     const stored = localStorage.getItem(LSKEY_THEME);
     theme = (
-      stored && THEMES.some(({ theme }) => theme === stored)
+      stored && AVAILABLE_THEMES.some(({ theme }) => theme === stored)
         ? (stored as Theme)
         : DEFAULT_THEME
     ) as Theme;
@@ -41,8 +44,8 @@
       localStorage.setItem(LSKEY_THEME, theme);
     } catch {}
 
-    const applyTheme = (newTheme: Exclude<Theme, "system">) => {
-      const themeName = THEME_MAP[newTheme] ?? newTheme;
+    const applyTheme = (newTheme: StaticTheme) => {
+      const themeName = THEME_MAP[newTheme] ?? THEME_MAP[FALLBACK_THEME];
       document.documentElement.dataset.theme = themeName;
     };
 
@@ -51,7 +54,7 @@
       return;
     }
 
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const mediaQuery = window.matchMedia("(prefers-color-scheme:dark)");
     const handleChange = () => {
       applyTheme(mediaQuery.matches ? "dark" : "light");
     };
@@ -95,7 +98,7 @@
       tabindex="-1"
       class="dropdown-content z-1 menu p-2 shadow bg-base-100 rounded-box w-52"
     >
-      {#each THEMES as { theme: t, icon }}
+      {#each AVAILABLE_THEMES as { theme: t, icon }}
         <li
           class:disabled={theme === t}
           class="[.disabled]:pointer-events-none"

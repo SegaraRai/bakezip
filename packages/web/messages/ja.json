@@ -1,6 +1,7 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "seo_page_description": "BakeZipを使って、ブラウザ上で直接ZIPファイル名の文字化けを修正し、アーカイブの内容を確認できます。安全、高速、プライバシー重視。",
+  "back_button_text": "BakeZipに戻る",
   "skip_to_main_content": "メインコンテンツにスキップ",
   "header_title": "BakeZip",
   "header_tagline": "ブラウザでZIPの文字化けを修復",

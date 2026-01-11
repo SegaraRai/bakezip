@@ -16,5 +16,5 @@ const { locale } = Astro.props;
   bodyClass="size-full"
   mainClass="size-full"
 >
-  <BakeZip locale={locale} client:load transition:persist />
+  <BakeZip client:load transition:persist locale={locale} />
 </Layout>

@@ -3,6 +3,7 @@
     createI18n,
     getLocalizedPath,
     LOCALES,
+    LSKEY_SELECTED_LOCALE,
     type Locale,
   } from "../lib/i18n";
 
@@ -16,6 +17,13 @@
   );
 
   const m = $derived.by(() => createI18n(currentLocale));
+
+  $effect(() => {
+    try {
+      localStorage.setItem(LSKEY_SELECTED_LOCALE, currentLocale);
+    } catch {}
+    document.documentElement.dataset.lastLocale = currentLocale;
+  });
 </script>
 
 <div

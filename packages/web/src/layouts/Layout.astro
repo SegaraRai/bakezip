@@ -1,5 +1,7 @@
 ---
 import { ClientRouter } from "astro:transitions";
+import { pwaAssetsHead } from "virtual:pwa-assets/head";
+import { pwaInfo } from "virtual:pwa-info";
 import { commitHash } from "../buildInfo.macro.ts" with { type: "macro" };
 import LanguageSelector from "../components/LanguageSelector.svelte";
 import LanguageSuggestion from "../components/LanguageSuggestion.svelte";
@@ -10,6 +12,12 @@ import {
   getLocalizedPath,
   type Locale,
 } from "../lib/i18n";
+import {
+  DEFAULT_THEME,
+  FALLBACK_THEME,
+  LSKEY_THEME,
+  THEME_MAP,
+} from "../lib/theme";
 
 import "../global.css";
 
@@ -55,35 +63,52 @@ const alternateLinks = LOCALES.map((l) => ({
     <meta name="twitter:image" content={socialImage} />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    {
+      pwaAssetsHead.themeColor && (
+        <meta name="theme-color" content={pwaAssetsHead.themeColor.content} />
+      )
+    }
     <link rel="canonical" href={Astro.url} />
     {
       alternateLinks.map((link) => (
         <link rel="alternate" hreflang={link.hreflang} href={link.href} />
       ))
     }
+    {pwaAssetsHead.links.map((link) => <link {...link} />)}
+    {pwaInfo && <Fragment set:html={pwaInfo.webManifest.linkTag} />}
     <title>{title}</title>
-    <script is:inline>
-      (() => {
-        let theme = "light";
-        try {
-          theme = localStorage.getItem("theme");
-          if (!theme || theme === "system") {
-            theme = window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light";
-          }
-          theme = { light: "winter", dark: "night" }[theme] ?? theme;
-        } catch {}
-        document.documentElement.dataset.theme = theme;
-
-        document.addEventListener("astro:before-swap", (event) => {
-          event.newDocument.documentElement.dataset.theme =
-            document.documentElement.dataset.theme;
-        });
-      })();
-    </script>
     <ClientRouter />
+    <slot name="script" />
+    <script
+      is:inline
+      define:vars={{
+        defaultTheme: DEFAULT_THEME,
+        fallbackTheme: FALLBACK_THEME,
+        lsKey: LSKEY_THEME,
+        themeMap: THEME_MAP,
+      }}
+    >
+      let theme = fallbackTheme;
+      try {
+        theme = localStorage.getItem(lsKey) ?? defaultTheme;
+        if (theme === "system") {
+          theme = window.matchMedia("(prefers-color-scheme:dark)").matches
+            ? "dark"
+            : "light";
+        }
+        theme = themeMap[theme] ?? themeMap[fallbackTheme];
+      } catch {}
+      document.documentElement.dataset.theme = theme;
+
+      document.addEventListener("astro:before-swap", (event) => {
+        for (const key of ["lastLocale", "theme"]) {
+          if (document.documentElement.dataset[key]) {
+            event.newDocument.documentElement.dataset[key] =
+              document.documentElement.dataset[key];
+          }
+        }
+      });
+    </script>
     {/* Commit Hash */}
     <Fragment set:html={`<!--#${commitHash}-->`} />
   </head>
@@ -128,17 +153,24 @@ const alternateLinks = LOCALES.map((l) => ({
       {
         !noTranslate && (
           <LanguageSelector
+            client:idle
+            transition:persist
             currentLocale={locale}
             pathname={Astro.url.pathname}
           />
         )
       }
-      <ThemeSelector client:idle={{ timeout: 500 }} locale={locale} />
+      <ThemeSelector
+        client:idle={{ timeout: 500 }}
+        transition:persist
+        locale={locale}
+      />
     </header>
     {
       !noTranslate && (
         <LanguageSuggestion
           client:load
+          transition:persist
           currentLocale={locale}
           pathname={Astro.url.pathname}
         />

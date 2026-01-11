@@ -1,0 +1,50 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { DEFAULT_LOCALE, LOCALES, LSKEY_SELECTED_LOCALE } from "../lib/i18n";
+
+const localeCodes = LOCALES.map((l) => l.code);
+---
+
+<Layout
+  locale={DEFAULT_LOCALE}
+  rootClass="size-full overflow-auto [scrollbar-gutter:stable]"
+  bodyClass="size-full"
+  mainClass="size-full"
+  noShare
+  noTranslate
+>
+  <script
+    slot="script"
+    is:inline
+    define:vars={{
+      availableLocales: localeCodes,
+      defaultLocale: DEFAULT_LOCALE,
+      lsKey: LSKEY_SELECTED_LOCALE,
+    }}
+  >
+    let languages;
+    try {
+      if (localStorage.getItem(lsKey)) {
+        languages = [localStorage.getItem(lsKey)];
+      }
+    } catch {}
+    languages ??= navigator.languages ?? [navigator.language];
+
+    let finalLanguage = defaultLocale;
+    for (const language of languages) {
+      const parsed = new Intl.Locale(language);
+      const matched =
+        availableLocales.find(
+          (l) => l === `${parsed.language}-${parsed.region}`
+        ) ?? availableLocales.find((l) => l === parsed.language);
+      if (matched) {
+        finalLanguage = matched;
+        break;
+      }
+    }
+
+    location.replace(
+      finalLanguage === defaultLocale ? "/" : `/${finalLanguage}/`
+    );
+  </script>
+</Layout>

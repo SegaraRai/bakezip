@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import {
     createI18n,
     getLocalizedPath,
@@ -15,15 +14,16 @@
   }: { currentLocale: Locale; pathname: string } = $props();
 
   let show = $state(false);
-  let suggestedLocale = $state<(typeof LOCALES)[number] | null>(null);
+  let suggestedLocale = $state.raw<(typeof LOCALES)[number] | null>(null);
 
   const m = $derived.by(() =>
     createI18n(suggestedLocale?.code ?? currentLocale),
   );
 
-  onMount(() => {
+  $effect(() => {
     const dismissed = localStorage.getItem(LSKEY_DISMISSED);
     if (dismissed) {
+      show = false;
       return;
     }
 
@@ -39,6 +39,7 @@
           try {
             localStorage.removeItem(LSKEY_DISMISSED);
           } catch {}
+          show = false;
         } else {
           suggestedLocale = matched;
           show = true;
