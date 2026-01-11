@@ -1,6 +1,6 @@
 # BakeZip
 
-**[Open Web App](https://bakezip.roundtrip.dev/)**
+**[Open Web App](https://bakezip.roundtrip.dev/pwa)**
 
 BakeZip is a modern tool designed to fix **mojibake** (garbled filenames) in ZIP archives. It runs entirely in your browser using WebAssembly, ensuring your files never leave your device.
 
