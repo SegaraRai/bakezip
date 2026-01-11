@@ -35,6 +35,29 @@ export default defineConfig({
         name: "BakeZip",
         short_name: "BakeZip",
         description: "Inspect, rebuild, and repair ZIPs in your browser.",
+        icons: [
+          {
+            src: "pwa-64x64.png",
+            sizes: "64x64",
+            type: "image/png",
+          },
+          {
+            src: "pwa-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+          {
+            src: "pwa-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+          },
+          {
+            src: "maskable-icon-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
         // @ts-expect-error _localized fields are not yet typed in vite-plugin-pwa
         description_localized: {
           en: "Inspect, rebuild, and repair ZIPs in your browser.",
