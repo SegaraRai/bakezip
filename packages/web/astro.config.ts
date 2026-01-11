@@ -14,6 +14,9 @@ import {
 // https://astro.build/config
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://bakezip.roundtrip.dev",
+  build: {
+    format: "preserve",
+  },
   i18n: {
     locales: locales,
     defaultLocale: baseLocale,
